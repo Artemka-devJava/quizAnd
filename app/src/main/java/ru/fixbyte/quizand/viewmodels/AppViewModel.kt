@@ -19,7 +19,7 @@ class AppViewModel : ViewModel() {
     val selectedRole: StateFlow<UserRole?> = _selectedRole
 
     // Host Settings
-    private val _hostNickname = MutableStateFlow("Хозяин")
+    private val _hostNickname = MutableStateFlow("Ведущий")
     val hostNickname: StateFlow<String> = _hostNickname
 
     private val _hostPortText = MutableStateFlow(NetworkManager.DEFAULT_PORT.toString())

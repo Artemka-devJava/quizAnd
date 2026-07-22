@@ -110,10 +110,10 @@ fun RoleSelectionScreen(viewModel: AppViewModel) {
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
                     ) {
-                        Text("👨‍🏫", fontSize = 36.sp, modifier = Modifier.padding(bottom = 8.dp))
+
                         Text(
                             "Ведущий",
-                            fontSize = 18.sp,
+                            fontSize = 25.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = Color.White
                         )
@@ -141,10 +141,10 @@ fun RoleSelectionScreen(viewModel: AppViewModel) {
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
                     ) {
-                        Text("🎮", fontSize = 36.sp, modifier = Modifier.padding(bottom = 8.dp))
+
                         Text(
                             "Игрок",
-                            fontSize = 18.sp,
+                            fontSize = 25.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = Color.White
                         )
@@ -177,7 +177,7 @@ fun HostLobbyScreen(viewModel: AppViewModel) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                "Ведущий",
+                "Запуск игры",
                 fontSize = 28.sp,
                 fontWeight = FontWeight.Bold,
                 color = TextPrimary
