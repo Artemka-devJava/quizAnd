@@ -15,10 +15,14 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -34,35 +38,38 @@ fun SplashScreen() {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(PrimaryBlue),
+            .background(
+                Brush.linearGradient(colors = listOf(SplashIndigo, PrimaryBlue))
+            ),
         contentAlignment = Alignment.Center
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-            modifier = Modifier.padding(24.dp)
+            verticalArrangement = Arrangement.Center
         ) {
+            Box(
+                modifier = Modifier
+                    .size(96.dp)
+                    .shadow(8.dp, RoundedCornerShape(22.dp))
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(Color.White),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("Я", fontSize = 40.sp, fontWeight = FontWeight.Bold, color = PrimaryBlue)
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
             Text(
-                "Q",
-                fontSize = 80.sp,
-                fontWeight = FontWeight.ExtraBold,
-                color = Color.White,
-                modifier = Modifier.padding(bottom = 16.dp)
-            )
-            Text(
-                "QUIZ",
-                fontSize = 48.sp,
+                "Я Знаю",
+                fontSize = 34.sp,
                 fontWeight = FontWeight.Bold,
-                color = Color.White,
-                modifier = Modifier.padding(bottom = 24.dp)
+                color = Color.White
             )
-            Text(
-                "Многопользовательское квиз приложение",
-                fontSize = 16.sp,
-                color = Color.White.copy(alpha = 0.8f),
-                modifier = Modifier.padding(horizontal = 32.dp),
-                textAlign = TextAlign.Center
-            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            CircularProgressIndicator(color = Color.White)
         }
     }
 }
@@ -77,78 +84,53 @@ fun RoleSelectionScreen(viewModel: AppViewModel) {
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
             modifier = Modifier
                 .padding(24.dp)
                 .fillMaxWidth()
         ) {
             Text(
                 "Выберите роль",
-                fontSize = 32.sp,
+                fontSize = 28.sp,
                 fontWeight = FontWeight.Bold,
                 color = TextPrimary,
-                modifier = Modifier.padding(bottom = 48.dp)
+                modifier = Modifier.padding(bottom = 32.dp)
             )
 
-            Card(
+            Button(
+                onClick = { viewModel.chooseRole(UserRole.HOST) },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(120.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .clickable { viewModel.chooseRole(UserRole.HOST) }
-                    .shadow(8.dp, RoundedCornerShape(16.dp)),
-                colors = CardDefaults.cardColors(containerColor = PrimaryBlue),
-                shape = RoundedCornerShape(16.dp)
+                    .height(50.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = PrimaryBlue,
+                    contentColor = Color.White
+                ),
+                shape = RoundedCornerShape(12.dp)
             ) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-
-                        Text(
-                            "Ведущий",
-                            fontSize = 25.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color.White
-                        )
-                    }
-                }
+                Text("Я ведущий", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-            Card(
+            OutlinedButton(
+                onClick = { viewModel.chooseRole(UserRole.PLAYER) },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(120.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .clickable { viewModel.chooseRole(UserRole.PLAYER) }
-                    .shadow(8.dp, RoundedCornerShape(16.dp)),
-                colors = CardDefaults.cardColors(containerColor = SecondaryTeal),
-                shape = RoundedCornerShape(16.dp)
+                    .height(50.dp),
+                shape = RoundedCornerShape(12.dp)
             ) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-
-                        Text(
-                            "Игрок",
-                            fontSize = 25.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color.White
-                        )
-                    }
-                }
+                Text("Я игрок", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = PrimaryBlue)
             }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            Text(
+                "Локальная игра по Wi-Fi без интернета",
+                fontSize = 12.sp,
+                color = TextSecondary,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
         }
     }
 }
@@ -156,9 +138,11 @@ fun RoleSelectionScreen(viewModel: AppViewModel) {
 @Composable
 fun HostLobbyScreen(viewModel: AppViewModel) {
     val hostNickname by viewModel.hostNickname.collectAsState()
-    val hostPortText by viewModel.hostPortText.collectAsState()
     val players by viewModel.players.collectAsState()
     val connectionHint by viewModel.connectionHint.collectAsState()
+
+    var showRulesDialog by remember { mutableStateOf(false) }
+    var showSettingsDialog by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -166,48 +150,36 @@ fun HostLobbyScreen(viewModel: AppViewModel) {
             .background(BackgroundLight)
             .verticalScroll(rememberScrollState())
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(16.dp)
-                .padding(top = 8.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+                .padding(top = 8.dp)
         ) {
             Text(
                 "Запуск игры",
                 fontSize = 28.sp,
                 fontWeight = FontWeight.Bold,
-                color = TextPrimary
+                color = TextPrimary,
+                modifier = Modifier.padding(bottom = 12.dp)
             )
-            Button(
-                onClick = { viewModel.resetToRoleSelection() },
-                modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp)),
-                colors = ButtonDefaults.buttonColors(containerColor = Color.White),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Text("Выход", fontSize = 12.sp, color = TextPrimary)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = { showRulesDialog = true },
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Правила", fontSize = 12.sp)
+                }
+                OutlinedButton(
+                    onClick = { showSettingsDialog = true },
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Настройки", fontSize = 12.sp)
+                }
             }
         }
 
         Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 16.dp),
-                colors = CardDefaults.cardColors(containerColor = PrimaryBlue.copy(alpha = 0.1f)),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Text(
-                    "Настройки сервера",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = TextSecondary,
-                    modifier = Modifier.padding(16.dp)
-                )
-            }
-
             OutlinedTextField(
                 value = hostNickname,
                 onValueChange = { viewModel.onHostNicknameChanged(it) },
@@ -215,20 +187,6 @@ fun HostLobbyScreen(viewModel: AppViewModel) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(bottom = 12.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = PrimaryBlue
-                ),
-                shape = RoundedCornerShape(12.dp)
-            )
-
-            OutlinedTextField(
-                value = hostPortText,
-                onValueChange = { viewModel.onHostPortTextChanged(it) },
-                label = { Text("Порт") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 16.dp),
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = PrimaryBlue
                 ),
@@ -311,7 +269,7 @@ fun HostLobbyScreen(viewModel: AppViewModel) {
                     onClick = { viewModel.startGameAsHost() },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 16.dp, bottom = 24.dp)
+                        .padding(top = 16.dp, bottom = 16.dp)
                         .height(50.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = AccentGreen),
                     shape = RoundedCornerShape(12.dp)
@@ -319,8 +277,119 @@ fun HostLobbyScreen(viewModel: AppViewModel) {
                     Text("Начать игру", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
                 }
             }
+
+            OutlinedButton(
+                onClick = { viewModel.resetToRoleSelection() },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 24.dp)
+                    .height(50.dp),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text("Назад", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
+            }
         }
     }
+
+    if (showRulesDialog) {
+        HostRulesDialog(onDismiss = { showRulesDialog = false })
+    }
+
+    if (showSettingsDialog) {
+        HostSettingsDialog(viewModel = viewModel, onDismiss = { showSettingsDialog = false })
+    }
+}
+
+@Composable
+private fun HostRulesDialog(onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Закрыть")
+            }
+        },
+        title = { Text("Как проходит раунд", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                RuleRow(number = "1", text = "Ведущий задаёт вопрос устно или читает его из внешнего источника.")
+                RuleRow(number = "2", text = "Ведущий нажимает «Открыть раунд».")
+                RuleRow(number = "3", text = "Игроки нажимают кнопку «Ответить». Засчитывается только первое нажатие.")
+                RuleRow(number = "4", text = "Ведущий видит, кто ответил первым, и принимает решение.")
+                RuleRow(number = "5", text = "Если ответ неверный — раунд продолжается, но этот игрок повторно нажать уже не может.")
+                RuleRow(number = "6", text = "Если ответ верный — игрок получает 1 очко, а раунд закрывается.")
+            }
+        }
+    )
+}
+
+@Composable
+private fun RuleRow(number: String, text: String) {
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Box(
+            modifier = Modifier
+                .size(28.dp)
+                .background(PrimaryBlue, shape = androidx.compose.foundation.shape.CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(number, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+        }
+        Text(text, fontSize = 14.sp, color = TextPrimary, modifier = Modifier.weight(1f))
+    }
+}
+
+@Composable
+private fun HostSettingsDialog(viewModel: AppViewModel, onDismiss: () -> Unit) {
+    val hostNickname by viewModel.hostNickname.collectAsState()
+    val hostPortText by viewModel.hostPortText.collectAsState()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Настройки ведущего", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = hostNickname,
+                    onValueChange = { viewModel.onHostNicknameChanged(it) },
+                    label = { Text("Имя ведущего") },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                )
+                OutlinedTextField(
+                    value = hostPortText,
+                    onValueChange = { viewModel.onHostPortTextChanged(it) },
+                    label = { Text("Порт") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                )
+                Text(
+                    "Текущий: $hostPortText",
+                    fontSize = 12.sp,
+                    color = TextSecondary
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    viewModel.startHosting()
+                    onDismiss()
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = PrimaryBlue)
+            ) {
+                Text("Применить и перезапустить сервер", fontSize = 13.sp, color = Color.White)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Отмена")
+            }
+        }
+    )
 }
 
 @Composable
@@ -621,6 +690,23 @@ fun PlayerJoinScreen(viewModel: AppViewModel) {
             }
         }
 
+        val disabledReason = when {
+            playerNickname.isEmpty() -> "Введите ник, чтобы подключиться"
+            selectedServerID == null -> "Выберите сервер из списка, чтобы подключиться"
+            else -> null
+        }
+        if (disabledReason != null) {
+            Text(
+                disabledReason,
+                fontSize = 12.sp,
+                color = AccentRed,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+            )
+        }
+
         Button(
             onClick = { viewModel.connectAsPlayer() },
             modifier = Modifier
@@ -630,11 +716,15 @@ fun PlayerJoinScreen(viewModel: AppViewModel) {
             enabled = playerNickname.isNotEmpty() && selectedServerID != null,
             colors = ButtonDefaults.buttonColors(
                 containerColor = SecondaryTeal,
-                disabledContainerColor = Color.Gray
+                contentColor = Color.White,
+                // Color.Gray (#808080) давал контраст с белым текстом ~4:1 — на грани читаемости.
+                // Более тёмный серый даёт ~6:1, текст остаётся чётким и в неактивном состоянии.
+                disabledContainerColor = Color(0xFF616161),
+                disabledContentColor = Color.White
             ),
             shape = RoundedCornerShape(12.dp)
         ) {
-            Text("Подключиться", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+            Text("Подключиться", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
         }
     }
 }

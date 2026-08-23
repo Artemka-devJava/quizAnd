@@ -6,6 +6,8 @@ import androidx.compose.ui.graphics.Color
 val PrimaryBlue = Color(0xFF007AFF)
 val PrimaryBlueLight = Color(0xFF5AC8FA)
 val PrimaryBlueDark = Color(0xFF0051D5)
+// Цвет для градиента сплэш-экрана — соответствует .indigo из SwiftUI/iOS.
+val SplashIndigo = Color(0xFF5856D6)
 
 // Secondary Colors
 val SecondaryTeal = Color(0xFF00C7BE)
