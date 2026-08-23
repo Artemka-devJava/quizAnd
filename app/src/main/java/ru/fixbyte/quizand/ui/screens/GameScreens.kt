@@ -7,8 +7,6 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -313,8 +311,8 @@ fun HostLobbyScreen(viewModel: AppViewModel) {
                     onClick = { viewModel.startGameAsHost() },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(50.dp)
-                        .padding(top = 16.dp, bottom = 24.dp),
+                        .padding(top = 16.dp, bottom = 24.dp)
+                        .height(50.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = AccentGreen),
                     shape = RoundedCornerShape(12.dp)
                 ) {
@@ -370,13 +368,13 @@ fun HostControlScreen(viewModel: AppViewModel) {
                 modifier = Modifier.padding(bottom = 12.dp, top = 8.dp)
             )
 
-            LazyColumn(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(bottom = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(players.sortedByDescending { scores[it.id] ?: 0 }) { player ->
+                players.sortedByDescending { scores[it.id] ?: 0 }.forEach { player ->
                     val isResponder = player.id == activeResponder?.id
                     val backgroundColor by animateColorAsState(
                         targetValue = if (isResponder) AccentYellow.copy(alpha = 0.2f) else Color.White,
@@ -541,13 +539,23 @@ fun PlayerJoinScreen(viewModel: AppViewModel) {
                 shape = RoundedCornerShape(12.dp)
             )
 
-            Text(
-                "Доступные серверы",
-                fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = TextPrimary,
-                modifier = Modifier.padding(bottom = 12.dp)
-            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "Доступные серверы",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = TextPrimary
+                )
+                TextButton(onClick = { viewModel.refreshServerDiscovery() }) {
+                    Text("Обновить", fontSize = 14.sp, color = PrimaryBlue)
+                }
+            }
 
             if (discoveredServers.isEmpty()) {
                 Card(
@@ -581,14 +589,13 @@ fun PlayerJoinScreen(viewModel: AppViewModel) {
                     }
                 }
             } else {
-                LazyColumn(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f)
                         .padding(bottom = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(discoveredServers) { server ->
+                    discoveredServers.forEach { server ->
                         Card(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -618,8 +625,8 @@ fun PlayerJoinScreen(viewModel: AppViewModel) {
             onClick = { viewModel.connectAsPlayer() },
             modifier = Modifier
                 .fillMaxWidth()
-                .height(50.dp)
-                .padding(16.dp),
+                .padding(16.dp)
+                .height(50.dp),
             enabled = playerNickname.isNotEmpty() && selectedServerID != null,
             colors = ButtonDefaults.buttonColors(
                 containerColor = SecondaryTeal,
@@ -724,13 +731,13 @@ fun PlayerQuestionScreen(viewModel: AppViewModel) {
                 modifier = Modifier.padding(bottom = 12.dp)
             )
 
-            LazyColumn(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(bottom = 20.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                items(players.sortedByDescending { scores[it.id] ?: 0 }.take(3)) { player ->
+                players.sortedByDescending { scores[it.id] ?: 0 }.take(3).forEach { player ->
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -860,4 +867,3 @@ fun PlayerQuestionScreen(viewModel: AppViewModel) {
         }
     }
 }
-

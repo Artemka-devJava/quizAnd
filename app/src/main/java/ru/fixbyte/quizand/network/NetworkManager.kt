@@ -1,5 +1,8 @@
 package ru.fixbyte.quizand.network
 
+import android.content.Context
+import android.net.wifi.WifiManager
+import android.util.Log
 import kotlinx.coroutines.*
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.decodeFromString
@@ -8,7 +11,13 @@ import ru.fixbyte.quizand.models.*
 import java.io.*
 import java.net.*
 import java.util.*
-import kotlin.collections.mutableMapOf
+import javax.jmdns.JmDNS
+import javax.jmdns.ServiceEvent
+import javax.jmdns.ServiceInfo
+import javax.jmdns.ServiceListener
+
+/** Единый тег для всех логов сетевого слоя — фильтруйте Logcat именно по нему. */
+private const val TAG = "YaZnayuNetwork"
 
 enum class NetworkMode {
     IDLE, HOST, CLIENT
@@ -22,21 +31,35 @@ class PeerConnection(
     val id: String = UUID.randomUUID().toString(),
     val socket: Socket
 ) {
-    var buffer = ByteArrayOutputStream()
     var playerInfo: PlayerInfo? = null
     var inputStream: InputStream? = null
     var outputStream: OutputStream? = null
 }
 
-class NetworkManager(private val scope: CoroutineScope = CoroutineScope(Dispatchers.Main + Job())) {
+/**
+ * Сетевой слой Android-клиента игры "Я знаю".
+ *
+ * Обнаружение хостов реализовано через JmDNS — Java-реализацию mDNS/DNS-SD
+ * (тот же протокол, RFC 6762/6763, что использует Apple Bonjour через
+ * Network.framework на iOS). Раньше здесь был перебор всех адресов подсети
+ * прямыми TCP-подключениями — это не позволяло iOS увидеть Android-хост
+ * вообще (он ничего не анонсировал в сети) и делало поиск на Android
+ * медленным и ненадёжным.
+ */
+class NetworkManager(
+    private val appContext: Context,
+    private val scope: CoroutineScope = CoroutineScope(Dispatchers.Main + Job())
+) {
     companion object {
         const val DEFAULT_PORT = 5000
-        const val SERVICE_TYPE = "_yaznayu._tcp"
+        // JmDNS ожидает домен ".local." в типе сервиса — тот же формат,
+        // в котором Bonjour регистрирует сервисы на iOS (NWListener с domain: nil).
+        const val SERVICE_TYPE = "_yaznayu._tcp.local."
     }
 
     private var _mode = NetworkMode.IDLE
     private var _status = ConnectionStatus.DISCONNECTED
-    private var _discoveredServers = mutableListOf<DiscoveredServer>()
+    private val _discoveredServers = mutableMapOf<String, DiscoveredServer>()
 
     var mode: NetworkMode
         get() = _mode
@@ -47,134 +70,256 @@ class NetworkManager(private val scope: CoroutineScope = CoroutineScope(Dispatch
         set(value) { _status = value }
 
     val discoveredServers: List<DiscoveredServer>
-        get() = _discoveredServers.toList()
+        get() = _discoveredServers.values.toList()
 
     var onEvent: ((NetworkEvent) -> Unit)? = null
+
+    /** Вызывается при любом изменении списка найденных хостов — для реактивного обновления UI. */
+    var onServersChanged: (() -> Unit)? = null
 
     private var serverSocket: ServerSocket? = null
     private var clientSocket: Socket? = null
     private val peers = mutableMapOf<String, PeerConnection>()
-    private var browsingJob: Job? = null
-    private var currentServerPort = DEFAULT_PORT
-    private var currentServiceName = "Host"
 
+    private var jmdns: JmDNS? = null
+    private var registeredServiceInfo: ServiceInfo? = null
+    private var serviceListener: ServiceListener? = null
+    private var multicastLock: WifiManager.MulticastLock? = null
+
+    // encodeDefaults = true — критично для совместимости с iOS: без этого kotlinx.serialization
+    // может пропускать поля со значением по умолчанию (например, sentAt) в исходящем JSON,
+    // а Swift Codable на iOS требует ВСЕ non-optional поля присутствующими явно — иначе decode
+    // падает с keyNotFound, даже если поле там формально не нужно смыслово.
     private val json = Json {
         ignoreUnknownKeys = true
+        encodeDefaults = true
     }
 
+    // ——— ХОСТ: TCP-сервер + анонс в mDNS/Bonjour ———
+
     fun startServer(port: Int = DEFAULT_PORT, serviceName: String) {
+        Log.d(TAG, "startServer(port=$port, name=$serviceName) вызван")
         scope.launch {
             try {
                 stopAll()
                 mode = NetworkMode.HOST
                 status = ConnectionStatus.CONNECTING
 
-                currentServerPort = port
-                currentServiceName = serviceName.trim().ifEmpty { "Host" }
+                val trimmedName = serviceName.trim().ifEmpty { "Host" }
 
-                serverSocket = ServerSocket(port.toInt()).apply {
-                    status = ConnectionStatus.CONNECTED
-                }
+                val socket = withContext(Dispatchers.IO) { ServerSocket(port) }
+                serverSocket = socket
+                Log.d(TAG, "ServerSocket поднят на порту $port")
+
+                withContext(Dispatchers.IO) { registerBonjourService(trimmedName, port) }
+
+                status = ConnectionStatus.CONNECTED
 
                 while (mode == NetworkMode.HOST && serverSocket != null) {
                     try {
-                        val clientConnection = serverSocket?.accept()
-                        if (clientConnection != null) {
-                            acceptNewPeer(clientConnection)
-                        }
+                        val clientConnection = withContext(Dispatchers.IO) { socket.accept() }
+                        Log.d(TAG, "Принято TCP-подключение от ${clientConnection.inetAddress?.hostAddress}")
+                        acceptNewPeer(clientConnection)
                     } catch (e: SocketException) {
-                        if (mode == NetworkMode.HOST) {
-                            delay(2000)
-                            startServer(port, serviceName)
-                        }
                         break
                     }
                 }
             } catch (e: Exception) {
+                Log.e(TAG, "startServer упал с исключением", e)
                 status = ConnectionStatus.FAILED
-                delay(2000)
-                if (mode == NetworkMode.HOST) {
-                    startServer(port, serviceName)
-                }
             }
         }
     }
+
+    /** Должен вызываться на фоновом потоке — блокирующие сетевые операции JmDNS. */
+    private fun registerBonjourService(serviceName: String, port: Int) {
+        try {
+            val localAddress = findLocalIPv4Address() ?: run {
+                Log.e(TAG, "registerBonjourService: не найден локальный IPv4-адрес — Bonjour-анонс отменён")
+                return
+            }
+            Log.d(TAG, "registerBonjourService: локальный адрес ${localAddress.hostAddress}")
+            acquireMulticastLock()
+            Log.d(TAG, "MulticastLock: held=${multicastLock?.isHeld}")
+
+            // ВАЖНО: адрес передаём ЯВНО. JmDNS.create() без аргументов на Android ненадёжен —
+            // внутри он может скатиться на InetAddress.getLocalHost(), который на Android часто
+            // возвращает 127.0.0.1 (loopback), поскольку у устройства нет настоящего DNS-хостнейма.
+            // В этом случае JmDNS слушает и рассылает multicast с loopback — сервис становится
+            // невидимым для остальных устройств в сети, и сам он тоже никого не видит.
+            val instance = jmdns ?: JmDNS.create(localAddress, null).also { jmdns = it }
+            Log.d(TAG, "JmDNS создан, hostName=${instance.name}")
+            val info = ServiceInfo.create(SERVICE_TYPE, serviceName, port, "")
+            instance.registerService(info)
+            registeredServiceInfo = info
+            Log.d(TAG, "registerService(\"$SERVICE_TYPE\", \"$serviceName\", port=$port) успешно вызван")
+        } catch (e: IOException) {
+            // Bonjour-анонс не удался (например, нет доступа к локальной сети) —
+            // сервер всё равно поднят и доступен по прямому IP, просто не будет виден в автопоиске.
+            Log.e(TAG, "registerBonjourService упал с IOException", e)
+        }
+    }
+
+    // ——— ИГРОК: поиск хостов через mDNS/Bonjour ———
 
     fun startBrowsingServers() {
-        browsingJob?.cancel()
-        browsingJob = scope.launch(Dispatchers.Default) {
-            val networkInterfaces = NetworkInterface.getNetworkInterfaces().toList()
+        Log.d(TAG, "startBrowsingServers() вызван")
+        stopBrowsingServers()
 
-            for (networkInterface in networkInterfaces) {
-                if (networkInterface.isLoopback || !networkInterface.isUp) continue
+        scope.launch {
+            try {
+                val localAddress = withContext(Dispatchers.IO) { findLocalIPv4Address() } ?: run {
+                    Log.e(TAG, "Не найден локальный IPv4-адрес (нет Wi-Fi?) — поиск отменён")
+                    status = ConnectionStatus.FAILED
+                    return@launch
+                }
+                Log.d(TAG, "Локальный адрес для JmDNS: ${localAddress.hostAddress}")
 
-                for (address in networkInterface.interfaceAddresses) {
-                    if (address.address !is Inet4Address) continue
+                withContext(Dispatchers.IO) { acquireMulticastLock() }
+                Log.d(TAG, "MulticastLock: held=${multicastLock?.isHeld}")
 
-                    val ip = address.address.hostAddress
-                    if (ip.startsWith("192.168.") || ip.startsWith("10.") || ip.startsWith("172.")) {
-                        // Scan ports
-                        scanNetworkRange(ip, DEFAULT_PORT)
+                val instance = jmdns ?: withContext(Dispatchers.IO) {
+                    JmDNS.create(localAddress, null)
+                }.also { jmdns = it }
+                Log.d(TAG, "JmDNS создан/переиспользован, hostName=${instance.name}")
+
+                val listener = object : ServiceListener {
+                    override fun serviceAdded(event: ServiceEvent) {
+                        Log.d(TAG, "serviceAdded: type=${event.type} name=${event.name} — запрашиваю подробности")
+                        // Полная информация (IP/порт) придёт асинхронно в serviceResolved.
+                        instance.requestServiceInfo(event.type, event.name, 3000)
                     }
+
+                    override fun serviceRemoved(event: ServiceEvent) {
+                        Log.d(TAG, "serviceRemoved: name=${event.name}")
+                        _discoveredServers.remove(event.name)
+                        onServersChanged?.invoke()
+                    }
+
+                    override fun serviceResolved(event: ServiceEvent) {
+                        val info = event.info
+                        val address = info.hostAddresses.firstOrNull()
+                        Log.d(TAG, "serviceResolved: name=${event.name} address=$address port=${info.port}")
+                        if (address == null) return
+                        _discoveredServers[event.name] = DiscoveredServer(
+                            id = event.name,
+                            name = event.name,
+                            ipAddress = address,
+                            port = info.port
+                        )
+                        onServersChanged?.invoke()
+                    }
+                }
+
+                serviceListener = listener
+                withContext(Dispatchers.IO) {
+                    instance.addServiceListener(SERVICE_TYPE, listener)
+                }
+                Log.d(TAG, "addServiceListener(\"$SERVICE_TYPE\") зарегистрирован, ждём ответов...")
+            } catch (e: IOException) {
+                Log.e(TAG, "Ошибка при запуске поиска", e)
+                status = ConnectionStatus.FAILED
+            }
+        }
+    }
+
+    fun stopBrowsingServers() {
+        val instance = jmdns
+        val listener = serviceListener
+        if (instance != null && listener != null) {
+            scope.launch(Dispatchers.IO) {
+                instance.removeServiceListener(SERVICE_TYPE, listener)
+            }
+        }
+        serviceListener = null
+        _discoveredServers.clear()
+    }
+
+    /**
+     * Ищет локальный IPv4-адрес для привязки JmDNS. Явно предпочитает Wi-Fi интерфейс
+     * (обычно "wlan0" на Android) и пропускает VPN/мобильные интерфейсы (tun/ppp/rmnet) —
+     * на устройствах с несколькими одновременно активными интерфейсами (например, Wi-Fi + VPN,
+     * или Wi-Fi + мобильные данные) простой перебор "первого попавшегося" адреса мог выбрать
+     * не тот интерфейс, из-за чего multicast-трафик не доходил до реальной Wi-Fi сети.
+     */
+    private fun findLocalIPv4Address(): InetAddress? {
+        val interfaces = NetworkInterface.getNetworkInterfaces()?.toList() ?: return null
+
+        val wifiAddress = interfaces
+            .firstOrNull { iface ->
+                iface.isUp && !iface.isLoopback && iface.name.startsWith("wlan")
+            }
+            ?.inetAddresses?.toList()
+            ?.firstOrNull { it is Inet4Address && !it.isLoopbackAddress }
+
+        if (wifiAddress != null) return wifiAddress
+
+        for (iface in interfaces) {
+            if (iface.isLoopback || !iface.isUp) continue
+
+            val name = iface.name.lowercase()
+            if (name.startsWith("tun") || name.startsWith("ppp") ||
+                name.startsWith("rmnet") || name.startsWith("p2p")
+            ) continue
+
+            for (address in iface.inetAddresses) {
+                if (address is Inet4Address && !address.isLoopbackAddress) {
+                    return address
                 }
             }
         }
+        return null
     }
 
-    private fun scanNetworkRange(baseIp: String, port: Int) {
-        val parts = baseIp.split(".")
-        if (parts.size != 4) return
-
-        val base = parts.take(3).joinToString(".")
-        val servers = mutableListOf<DiscoveredServer>()
-
-        for (i in 1..254) {
-            val ip = "$base.$i"
-            try {
-                val socket = Socket()
-                socket.connect(InetSocketAddress(ip, port), 500)
-                socket.close()
-
-                servers.add(
-                    DiscoveredServer(
-                        id = "$ip:$port",
-                        name = "Host",
-                        ipAddress = ip,
-                        port = port
-                    )
-                )
-            } catch (e: Exception) {
-                // Host not available
-            }
+    /** Без MulticastLock Android по умолчанию фильтрует входящие multicast-пакеты Wi-Fi,
+     *  и mDNS-объявления (в обе стороны) до приложения просто не доходят. */
+    private fun acquireMulticastLock() {
+        if (multicastLock?.isHeld == true) return
+        val wifiManager = appContext.applicationContext
+            .getSystemService(Context.WIFI_SERVICE) as? WifiManager ?: run {
+            Log.e(TAG, "acquireMulticastLock: WifiManager недоступен (null)")
+            return
         }
-
-        _discoveredServers = servers
+        val lock = wifiManager.createMulticastLock("yaznayuMulticastLock")
+        lock.setReferenceCounted(true)
+        lock.acquire()
+        multicastLock = lock
+        Log.d(TAG, "MulticastLock захвачен: held=${lock.isHeld}")
     }
+
+    private fun releaseMulticastLock() {
+        multicastLock?.let { if (it.isHeld) it.release() }
+        multicastLock = null
+    }
+
+    // ——— Подключение к хосту напрямую по IP (адрес получен из mDNS-резолва) ———
 
     fun connectToServer(ip: String, port: Int = DEFAULT_PORT) {
+        Log.d(TAG, "connectToServer(ip=$ip, port=$port) вызван")
         scope.launch {
             try {
                 stopClientOnly()
                 mode = NetworkMode.CLIENT
                 status = ConnectionStatus.CONNECTING
 
-                clientSocket = Socket(ip, port).apply {
-                    status = ConnectionStatus.CONNECTED
-                    val peer = PeerConnection(socket = this)
-                    peer.inputStream = getInputStream()
-                    peer.outputStream = getOutputStream()
-                    startReceiveLoop(peer, isClient = true)
-                }
+                val socket = withContext(Dispatchers.IO) { Socket(ip, port) }
+                clientSocket = socket
+                status = ConnectionStatus.CONNECTED
+                Log.d(TAG, "TCP-соединение установлено с $ip:$port")
+
+                val peer = PeerConnection(socket = socket)
+                peer.inputStream = socket.getInputStream()
+                peer.outputStream = socket.getOutputStream()
+                startReceiveLoop(peer, isClient = true)
             } catch (e: Exception) {
+                Log.e(TAG, "connectToServer($ip:$port) упал с исключением", e)
                 status = ConnectionStatus.FAILED
-                delay(2000)
-                connectToServer(ip, port)
             }
         }
     }
 
     fun send(message: GameMessage, toPlayerID: String? = null) {
-        scope.launch {
+        scope.launch(Dispatchers.IO) {
             try {
                 val jsonString = json.encodeToString(message)
                 val data = (jsonString + "\n").toByteArray()
@@ -210,7 +355,24 @@ class NetworkManager(private val scope: CoroutineScope = CoroutineScope(Dispatch
     }
 
     fun stopAll() {
-        browsingJob?.cancel()
+        stopBrowsingServers()
+
+        registeredServiceInfo?.let { info ->
+            jmdns?.let { instance ->
+                scope.launch(Dispatchers.IO) {
+                    try { instance.unregisterService(info) } catch (e: Exception) { }
+                }
+            }
+        }
+        registeredServiceInfo = null
+
+        jmdns?.let { instance ->
+            scope.launch(Dispatchers.IO) {
+                try { instance.close() } catch (e: IOException) { }
+            }
+        }
+        jmdns = null
+        releaseMulticastLock()
 
         serverSocket?.close()
         serverSocket = null
@@ -243,6 +405,7 @@ class NetworkManager(private val scope: CoroutineScope = CoroutineScope(Dispatch
                     if (line.isNotEmpty()) {
                         try {
                             val message = json.decodeFromString<GameMessage>(line)
+                            Log.d(TAG, "Получено сообщение: kind=${message.kind} sender=${message.senderNickname} player=${message.player?.nickname}")
 
                             if (message.kind == MessageKind.HELLO.toString() && message.player != null) {
                                 peer.playerInfo = message.player
@@ -255,15 +418,18 @@ class NetworkManager(private val scope: CoroutineScope = CoroutineScope(Dispatch
                                 onEvent?.invoke(NetworkEvent.Message(message))
                             }
                         } catch (e: Exception) {
-                            // JSON parsing error
-                            println("JSON parsing error: ${e.message}")
+                            // Печатаем сырую строку и полную ошибку в Logcat — этого достаточно,
+                            // чтобы сразу увидеть, какое именно поле/формат не совпадает с iOS.
+                            println("——— [Decode] Не удалось декодировать GameMessage ———")
+                            println("——— [Decode] Сырые данные: $line")
+                            println("——— [Decode] Ошибка: ${e::class.simpleName}: ${e.message}")
+                            println("———————————————————————————————————————————")
                         }
                     }
                 }
             } catch (e: Exception) {
                 if (isClient) {
-                    delay(2000)
-                    // Reconnect logic
+                    // Переподключение управляется на уровне ViewModel/UI при необходимости.
                 } else {
                     peers.remove(peer.id)
                     peer.playerInfo?.let {
@@ -281,4 +447,3 @@ class NetworkManager(private val scope: CoroutineScope = CoroutineScope(Dispatch
         clientSocket = null
     }
 }
-

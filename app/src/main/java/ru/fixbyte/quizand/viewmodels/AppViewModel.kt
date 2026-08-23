@@ -1,6 +1,8 @@
 package ru.fixbyte.quizand.viewmodels
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import android.util.Log
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -10,7 +12,9 @@ import ru.fixbyte.quizand.models.*
 import ru.fixbyte.quizand.network.NetworkManager
 import java.util.UUID
 
-class AppViewModel : ViewModel() {
+private const val TAG = "YaZnayuNetwork"
+
+class AppViewModel(application: Application) : AndroidViewModel(application) {
     // UI State
     private val _phase = MutableStateFlow(AppPhase.SPLASH)
     val phase: StateFlow<AppPhase> = _phase
@@ -65,7 +69,7 @@ class AppViewModel : ViewModel() {
     val discoveredServers: StateFlow<List<DiscoveredServer>> = _discoveredServers
 
     private val localPlayerID = UUID.randomUUID().toString()
-    private val network = NetworkManager(viewModelScope)
+    private val network = NetworkManager(getApplication(), viewModelScope)
     private var attemptedPlayerIDsInRound = mutableSetOf<String>()
 
     init {
@@ -74,6 +78,12 @@ class AppViewModel : ViewModel() {
 
         network.onEvent = { event ->
             handleNetworkEvent(event)
+        }
+
+        // Реактивно обновляем список хостов по мере того, как JmDNS резолвит найденные сервисы,
+        // а не только один раз после фиксированной задержки.
+        network.onServersChanged = {
+            _discoveredServers.value = network.discoveredServers
         }
     }
 
@@ -100,6 +110,7 @@ class AppViewModel : ViewModel() {
     fun resetToRoleSelection() {
         network.stopAll()
         _players.value = emptyList()
+        _discoveredServers.value = emptyList()
         _selectedServerID.value = null
         _selectedRole.value = null
         _connectionHint.value = ""
@@ -131,11 +142,10 @@ class AppViewModel : ViewModel() {
     }
 
     fun refreshServerDiscovery() {
-        viewModelScope.launch {
-            network.startBrowsingServers()
-            delay(3000)
-            _discoveredServers.value = network.discoveredServers
-        }
+        _discoveredServers.value = emptyList()
+        network.startBrowsingServers()
+        // Список будет обновляться реактивно через network.onServersChanged по мере
+        // резолва JmDNS; задержка здесь не нужна.
     }
 
     fun startGameAsHost() {
@@ -266,24 +276,29 @@ class AppViewModel : ViewModel() {
     }
 
     fun connectAsPlayer() {
+        Log.d(TAG, "connectAsPlayer() вызван, nickname='${_playerNickname.value}', selectedServerID=${_selectedServerID.value}")
         val nickname = _playerNickname.value.trim()
         if (nickname.isEmpty()) {
+            Log.d(TAG, "connectAsPlayer: отменено — пустой ник")
             _connectionHint.value = "Введите ник"
             return
         }
 
         val selectedServer = _selectedServerID.value
         if (selectedServer == null) {
+            Log.d(TAG, "connectAsPlayer: отменено — сервер не выбран")
             _connectionHint.value = "Выберите сервер из списка"
             return
         }
 
         val server = _discoveredServers.value.find { it.id == selectedServer }
         if (server == null) {
+            Log.d(TAG, "connectAsPlayer: отменено — id=$selectedServer нет среди ${_discoveredServers.value.map { it.id }}")
             _connectionHint.value = "Сервер не найден"
             return
         }
 
+        Log.d(TAG, "connectAsPlayer: подключаемся к ${server.ipAddress}:${server.port}")
         viewModelScope.launch {
             network.connectToServer(server.ipAddress, server.port)
             delay(500)
@@ -482,4 +497,3 @@ class AppViewModel : ViewModel() {
         }
     }
 }
-
