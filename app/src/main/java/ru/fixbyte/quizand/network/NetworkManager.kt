@@ -216,7 +216,10 @@ class NetworkManager(
                     instance.addServiceListener(SERVICE_TYPE, listener)
                 }
                 Log.d(TAG, "addServiceListener(\"$SERVICE_TYPE\") зарегистрирован, ждём ответов...")
-            } catch (e: IOException) {
+            } catch (e: Exception) {
+                // Ловим не только IOException, но и, например, SecurityException из
+                // acquireMulticastLock() — иначе такая ошибка тихо прерывала бы поиск,
+                // даже не попадая в лог.
                 Log.e(TAG, "Ошибка при запуске поиска", e)
                 status = ConnectionStatus.FAILED
             }
@@ -280,11 +283,19 @@ class NetworkManager(
             Log.e(TAG, "acquireMulticastLock: WifiManager недоступен (null)")
             return
         }
-        val lock = wifiManager.createMulticastLock("yaznayuMulticastLock")
-        lock.setReferenceCounted(true)
-        lock.acquire()
-        multicastLock = lock
-        Log.d(TAG, "MulticastLock захвачен: held=${lock.isHeld}")
+        try {
+            val lock = wifiManager.createMulticastLock("yaznayuMulticastLock")
+            lock.setReferenceCounted(true)
+            lock.acquire()
+            multicastLock = lock
+            Log.d(TAG, "MulticastLock захвачен: held=${lock.isHeld}")
+        } catch (e: SecurityException) {
+            // Возникает, если в установленном APK нет разрешения CHANGE_WIFI_MULTICAST_STATE —
+            // например, если APK собран из старой версии AndroidManifest.xml (до добавления
+            // этого разрешения) и просто переустановлен без пересборки из актуального манифеста.
+            Log.e(TAG, "acquireMulticastLock: НЕТ РАЗРЕШЕНИЯ CHANGE_WIFI_MULTICAST_STATE — " +
+                    "пересоберите APK из актуального AndroidManifest.xml и переустановите приложение", e)
+        }
     }
 
     private fun releaseMulticastLock() {
