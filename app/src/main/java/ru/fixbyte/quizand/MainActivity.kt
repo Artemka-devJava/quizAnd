@@ -33,6 +33,7 @@ class MainActivity : ComponentActivity() {
                 ) {
                     when (phase) {
                         AppPhase.SPLASH -> SplashScreen()
+                        AppPhase.CONNECTION_MODE_SELECTION -> ConnectionModeSelectionScreen(viewModel)
                         AppPhase.ROLE_SELECTION -> RoleSelectionScreen(viewModel)
                         AppPhase.HOST_LOBBY -> HostLobbyScreen(viewModel)
                         AppPhase.HOST_CONTROL -> HostControlScreen(viewModel)

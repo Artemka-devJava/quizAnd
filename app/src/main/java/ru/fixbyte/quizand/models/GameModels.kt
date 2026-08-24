@@ -11,8 +11,21 @@ enum class UserRole {
     HOST, PLAYER
 }
 
+/**
+ * Как телефоны связаны в локальной сети — определяет, как игрок ищет хоста.
+ * ROUTER: оба устройства в сети обычного Wi-Fi-роутера — mDNS/multicast работает
+ * штатно, поэтому доступен автопоиск.
+ * HOTSPOT: один из телефонов раздаёт точку доступа. Многие хотспоты либо не
+ * пробрасывают multicast-трафик, либо включают изоляцию клиентов — автопоиск
+ * ненадёжен, поэтому игрок подключается по IP, а хост показывает свой адрес.
+ */
+enum class ConnectionMode {
+    ROUTER, HOTSPOT
+}
+
 enum class AppPhase {
     SPLASH,
+    CONNECTION_MODE_SELECTION,
     ROLE_SELECTION,
     HOST_LOBBY,
     HOST_CONTROL,

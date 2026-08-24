@@ -22,6 +22,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val _selectedRole = MutableStateFlow<UserRole?>(null)
     val selectedRole: StateFlow<UserRole?> = _selectedRole
 
+    private val _connectionMode = MutableStateFlow<ConnectionMode?>(null)
+    val connectionMode: StateFlow<ConnectionMode?> = _connectionMode
+
+    /** Собственный IP-адрес хоста в текущей Wi-Fi-сети — показывается игрокам
+     *  для ручного подключения, когда сеть организована через хотспот. */
+    private val _hostLocalIp = MutableStateFlow<String?>(null)
+    val hostLocalIp: StateFlow<String?> = _hostLocalIp
+
     // Host Settings
     private val _hostNickname = MutableStateFlow("Ведущий")
     val hostNickname: StateFlow<String> = _hostNickname
@@ -90,8 +98,17 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private fun bootSplash() {
         viewModelScope.launch {
             delay(2000)
-            _phase.value = AppPhase.ROLE_SELECTION
+            _phase.value = AppPhase.CONNECTION_MODE_SELECTION
         }
+    }
+
+    fun chooseConnectionMode(mode: ConnectionMode) {
+        _connectionMode.value = mode
+        _phase.value = AppPhase.ROLE_SELECTION
+    }
+
+    fun backToConnectionModeSelection() {
+        _phase.value = AppPhase.CONNECTION_MODE_SELECTION
     }
 
     fun chooseRole(role: UserRole) {
@@ -102,8 +119,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         if (role == UserRole.PLAYER) {
-            refreshServerDiscovery()
-            _connectionHint.value = "Поиск ведущих в локальной сети..."
+            if (_connectionMode.value == ConnectionMode.ROUTER) {
+                refreshServerDiscovery()
+                _connectionHint.value = "Поиск ведущих в локальной сети..."
+            } else {
+                // В хотспот-сетях mDNS/multicast часто не доходит между устройствами —
+                // не тратим время на ненадёжный автопоиск, сразу предлагаем ручной ввод IP.
+                _connectionHint.value = "Введите IP-адрес хоста вручную"
+            }
         }
     }
 
@@ -114,6 +137,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         _selectedServerID.value = null
         _selectedRole.value = null
         _connectionHint.value = ""
+        _hostLocalIp.value = null
 
         _roundIsOpen.value = false
         _activeResponder.value = null
@@ -138,14 +162,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             network.startServer(port, _hostNickname.value)
             _connectionHint.value = "Сервер \"${_hostNickname.value}\" запущен на порту $port"
+            _hostLocalIp.value = network.getLocalIPv4Address()
         }
     }
 
     fun refreshServerDiscovery() {
         _discoveredServers.value = emptyList()
         network.startBrowsingServers()
+        network.startSubnetScan()
         // Список будет обновляться реактивно через network.onServersChanged по мере
-        // резолва JmDNS; задержка здесь не нужна.
+        // резолва JmDNS и по мере нахождения открытых портов при переборе подсети.
     }
 
     fun startGameAsHost() {
@@ -298,9 +324,43 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        Log.d(TAG, "connectAsPlayer: подключаемся к ${server.ipAddress}:${server.port}")
+        connectToHostAndJoin(server.ipAddress, server.port, server.name)
+    }
+
+    /**
+     * Подключение вручную по IP:порт — резервный путь для сетей, где mDNS/multicast
+     * не доходит между устройствами (например, Wi-Fi-хотспот с телефона: сам хотспот
+     * обычно не пробрасывает multicast-трафик от AP к подключённому клиенту).
+     */
+    fun connectAsPlayerManual(hostText: String) {
+        val nickname = _playerNickname.value.trim()
+        if (nickname.isEmpty()) {
+            _connectionHint.value = "Введите ник"
+            return
+        }
+
+        val trimmed = hostText.trim()
+        if (trimmed.isEmpty()) {
+            _connectionHint.value = "Введите IP-адрес хоста"
+            return
+        }
+
+        val parts = trimmed.split(":")
+        val ip = parts[0].trim()
+        val port = parts.getOrNull(1)?.trim()?.toIntOrNull() ?: 5000
+        if (ip.isEmpty()) {
+            _connectionHint.value = "Неверный формат. Пример: 192.168.1.5:5000"
+            return
+        }
+
+        connectToHostAndJoin(ip, port, ip)
+    }
+
+    private fun connectToHostAndJoin(ip: String, port: Int, displayName: String) {
+        val nickname = _playerNickname.value.trim()
+        Log.d(TAG, "connectToHostAndJoin: подключаемся к $ip:$port")
         viewModelScope.launch {
-            network.connectToServer(server.ipAddress, server.port)
+            network.connectToServer(ip, port)
             delay(500)
 
             val me = PlayerInfo(id = localPlayerID, nickname = nickname)
@@ -312,7 +372,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             )
             network.send(hello)
 
-            _connectionHint.value = "Подключение к ${server.name}"
+            _connectionHint.value = "Подключение к $displayName"
             _phase.value = AppPhase.PLAYER_WAITING
         }
     }

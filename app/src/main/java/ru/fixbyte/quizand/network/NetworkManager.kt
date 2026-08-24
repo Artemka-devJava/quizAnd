@@ -4,6 +4,8 @@ import android.content.Context
 import android.net.wifi.WifiManager
 import android.util.Log
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -248,6 +250,11 @@ class NetworkManager(
      * или Wi-Fi + мобильные данные) простой перебор "первого попавшегося" адреса мог выбрать
      * не тот интерфейс, из-за чего multicast-трафик не доходил до реальной Wi-Fi сети.
      */
+    /** Публичный доступ к локальному IPv4-адресу — используется UI, чтобы показать
+     *  хосту его собственный адрес для подключений вручную (сценарий хотспота). */
+    suspend fun getLocalIPv4Address(): String? =
+        withContext(Dispatchers.IO) { findLocalIPv4Address()?.hostAddress }
+
     private fun findLocalIPv4Address(): InetAddress? {
         val interfaces = NetworkInterface.getNetworkInterfaces()?.toList() ?: return null
 
@@ -275,6 +282,56 @@ class NetworkManager(
             }
         }
         return null
+    }
+
+    /**
+     * Дополняет mDNS-поиск прямым перебором адресов подсети /24 прямыми TCP-подключениями
+     * на игровой порт. mDNS не находит хосты в сетях, где multicast-трафик не доходит
+     * между устройствами — например, когда один из телефонов сам раздаёт Wi-Fi-хотспот:
+     * Android там нередко не пробрасывает multicast от AP-интерфейса к обычным приложениям.
+     * Прямой TCP-коннект на каждый адрес работает независимо от multicast, ценой нескольких
+     * секунд на полный перебор 254 адресов.
+     */
+    fun startSubnetScan(port: Int = DEFAULT_PORT) {
+        Log.d(TAG, "startSubnetScan(port=$port) вызван")
+        scope.launch {
+            val localAddress = withContext(Dispatchers.IO) { findLocalIPv4Address() } ?: run {
+                Log.e(TAG, "startSubnetScan: не найден локальный IPv4-адрес — скан отменён")
+                return@launch
+            }
+            val localIp = localAddress.hostAddress ?: return@launch
+            val prefix = localIp.substringBeforeLast(".")
+            Log.d(TAG, "startSubnetScan: сканирую $prefix.1-254 на порту $port")
+
+            withContext(Dispatchers.IO) {
+                val semaphore = Semaphore(32)
+                (1..254).map { host ->
+                    async {
+                        val candidateIp = "$prefix.$host"
+                        if (candidateIp == localIp) return@async
+                        semaphore.withPermit {
+                            try {
+                                Socket().use { socket ->
+                                    socket.connect(InetSocketAddress(candidateIp, port), 400)
+                                    Log.d(TAG, "startSubnetScan: найден открытый порт на $candidateIp:$port")
+                                    val id = "scan:$candidateIp:$port"
+                                    _discoveredServers[id] = DiscoveredServer(
+                                        id = id,
+                                        name = "Хост $candidateIp",
+                                        ipAddress = candidateIp,
+                                        port = port
+                                    )
+                                    withContext(Dispatchers.Main) { onServersChanged?.invoke() }
+                                }
+                            } catch (e: IOException) {
+                                // Порт закрыт/недоступен — ожидаемый исход для большинства адресов подсети.
+                            }
+                        }
+                    }
+                }.awaitAll()
+            }
+            Log.d(TAG, "startSubnetScan: завершён")
+        }
     }
 
     /** Без MulticastLock Android по умолчанию фильтрует входящие multicast-пакеты Wi-Fi,

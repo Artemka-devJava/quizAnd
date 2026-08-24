@@ -1,9 +1,14 @@
 package ru.fixbyte.quizand.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -24,13 +29,21 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.core.content.ContextCompat
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
+import ru.fixbyte.quizand.models.ConnectionMode
 import ru.fixbyte.quizand.models.UserRole
 import ru.fixbyte.quizand.ui.theme.*
+import ru.fixbyte.quizand.util.generateQrBitmap
 import ru.fixbyte.quizand.viewmodels.AppViewModel
 
 @Composable
@@ -75,7 +88,7 @@ fun SplashScreen() {
 }
 
 @Composable
-fun RoleSelectionScreen(viewModel: AppViewModel) {
+fun ConnectionModeSelectionScreen(viewModel: AppViewModel) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -85,6 +98,94 @@ fun RoleSelectionScreen(viewModel: AppViewModel) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier
+                .padding(24.dp)
+                .fillMaxWidth()
+        ) {
+            Text(
+                "Как соединены телефоны?",
+                fontSize = 26.sp,
+                fontWeight = FontWeight.Bold,
+                color = TextPrimary,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+            Text(
+                "От этого зависит, как игроки будут находить ведущего",
+                fontSize = 13.sp,
+                color = TextSecondary,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(bottom = 32.dp)
+            )
+
+            Button(
+                onClick = { viewModel.chooseConnectionMode(ConnectionMode.ROUTER) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 64.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = PrimaryBlue,
+                    contentColor = Color.White
+                ),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("Через Wi-Fi роутер", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Оба телефона в одной домашней/офисной сети — автопоиск хоста",
+                        fontSize = 11.sp,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            OutlinedButton(
+                onClick = { viewModel.chooseConnectionMode(ConnectionMode.HOTSPOT) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 64.dp),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("Через точку доступа телефона", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = PrimaryBlue)
+                    Text(
+                        "Один телефон раздаёт хотспот — подключение по IP-адресу",
+                        fontSize = 11.sp,
+                        color = TextSecondary,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun RoleSelectionScreen(viewModel: AppViewModel) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(BackgroundLight)
+    ) {
+        Button(
+            onClick = { viewModel.backToConnectionModeSelection() },
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(16.dp)
+                .clip(RoundedCornerShape(12.dp)),
+            colors = ButtonDefaults.buttonColors(containerColor = Color.White),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Text("Назад", fontSize = 12.sp, color = TextPrimary)
+        }
+
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier
+                .align(Alignment.Center)
                 .padding(24.dp)
                 .fillMaxWidth()
         ) {
@@ -140,6 +241,9 @@ fun HostLobbyScreen(viewModel: AppViewModel) {
     val hostNickname by viewModel.hostNickname.collectAsState()
     val players by viewModel.players.collectAsState()
     val connectionHint by viewModel.connectionHint.collectAsState()
+    val connectionMode by viewModel.connectionMode.collectAsState()
+    val hostLocalIp by viewModel.hostLocalIp.collectAsState()
+    val hostPortText by viewModel.hostPortText.collectAsState()
 
     var showRulesDialog by remember { mutableStateOf(false) }
     var showSettingsDialog by remember { mutableStateOf(false) }
@@ -233,6 +337,79 @@ fun HostLobbyScreen(viewModel: AppViewModel) {
                         color = SecondaryTealDark,
                         modifier = Modifier.padding(12.dp)
                     )
+                }
+            }
+
+            if (connectionMode == ConnectionMode.HOTSPOT && hostLocalIp != null) {
+                var showQrDialog by remember { mutableStateOf(false) }
+                val hostAddress = "$hostLocalIp:$hostPortText"
+
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 16.dp)
+                        .clickable { showQrDialog = true },
+                    colors = CardDefaults.cardColors(containerColor = PrimaryBlue.copy(alpha = 0.1f)),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, PrimaryBlue)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            "Скажите игрокам подключиться по IP (нажмите для QR-кода):",
+                            fontSize = 13.sp,
+                            color = TextSecondary
+                        )
+                        Text(
+                            hostAddress,
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = PrimaryBlue,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
+                }
+
+                if (showQrDialog) {
+                    Dialog(onDismissRequest = { showQrDialog = false }) {
+                        val qrBitmap = remember(hostAddress) { generateQrBitmap(hostAddress) }
+                        Card(
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color.White)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(24.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    "Отсканируйте камерой на телефоне игрока",
+                                    fontSize = 14.sp,
+                                    color = TextSecondary,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.padding(bottom = 16.dp)
+                                )
+                                Image(
+                                    bitmap = qrBitmap.asImageBitmap(),
+                                    contentDescription = "QR-код для подключения",
+                                    modifier = Modifier.size(240.dp)
+                                )
+                                Text(
+                                    hostAddress,
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = TextPrimary,
+                                    modifier = Modifier.padding(top = 16.dp)
+                                )
+                                Spacer(modifier = Modifier.height(16.dp))
+                                Button(
+                                    onClick = { showQrDialog = false },
+                                    colors = ButtonDefaults.buttonColors(containerColor = PrimaryBlue),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Text("Закрыть", color = Color.White)
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -567,6 +744,8 @@ fun PlayerJoinScreen(viewModel: AppViewModel) {
     val selectedServerID by viewModel.selectedServerID.collectAsState()
     val discoveredServers by viewModel.discoveredServers.collectAsState()
     val connectionHint by viewModel.connectionHint.collectAsState()
+    val connectionMode by viewModel.connectionMode.collectAsState()
+    val isRouterMode = connectionMode != ConnectionMode.HOTSPOT
 
     Column(
         modifier = Modifier
@@ -608,123 +787,212 @@ fun PlayerJoinScreen(viewModel: AppViewModel) {
                 shape = RoundedCornerShape(12.dp)
             )
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 12.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    "Доступные серверы",
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = TextPrimary
-                )
-                TextButton(onClick = { viewModel.refreshServerDiscovery() }) {
-                    Text("Обновить", fontSize = 14.sp, color = PrimaryBlue)
-                }
-            }
-
-            if (discoveredServers.isEmpty()) {
-                Card(
+            if (isRouterMode) {
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(bottom = 16.dp),
-                    colors = CardDefaults.cardColors(containerColor = SecondaryTeal.copy(alpha = 0.1f)),
-                    shape = RoundedCornerShape(12.dp)
+                        .padding(bottom = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(
-                        modifier = Modifier
-                            .padding(16.dp)
-                            .fillMaxWidth(),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        CircularProgressIndicator(
-                            modifier = Modifier
-                                .size(48.dp)
-                                .padding(8.dp),
-                            color = SecondaryTeal,
-                            strokeWidth = 3.dp
-                        )
-                        Text(
-                            connectionHint,
-                            fontSize = 14.sp,
-                            color = TextSecondary,
-                            modifier = Modifier.padding(top = 12.dp),
-                            textAlign = TextAlign.Center
-                        )
+                    Text(
+                        "Доступные серверы",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = TextPrimary
+                    )
+                    TextButton(onClick = { viewModel.refreshServerDiscovery() }) {
+                        Text("Обновить", fontSize = 14.sp, color = PrimaryBlue)
                     }
                 }
-            } else {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    discoveredServers.forEach { server ->
-                        Card(
+
+                if (discoveredServers.isEmpty()) {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 16.dp),
+                        colors = CardDefaults.cardColors(containerColor = SecondaryTeal.copy(alpha = 0.1f)),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Column(
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { viewModel.onServerSelected(server.id) },
-                            colors = CardDefaults.cardColors(
-                                containerColor = if (selectedServerID == server.id) SecondaryTeal.copy(alpha = 0.15f) else Color.White
-                            ),
-                            shape = RoundedCornerShape(12.dp),
-                            border = if (selectedServerID == server.id) BorderStroke(2.dp, SecondaryTeal) else null
+                                .padding(16.dp)
+                                .fillMaxWidth(),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
                         ) {
-                            Column(modifier = Modifier.padding(16.dp)) {
-                                Text(server.name, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
-                                Text(
-                                    "${server.ipAddress}:${server.port}",
-                                    fontSize = 12.sp,
-                                    color = TextSecondary,
-                                    modifier = Modifier.padding(top = 4.dp)
-                                )
+                            CircularProgressIndicator(
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .padding(8.dp),
+                                color = SecondaryTeal,
+                                strokeWidth = 3.dp
+                            )
+                            Text(
+                                connectionHint,
+                                fontSize = 14.sp,
+                                color = TextSecondary,
+                                modifier = Modifier.padding(top = 12.dp),
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+                } else {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        discoveredServers.forEach { server ->
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { viewModel.onServerSelected(server.id) },
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (selectedServerID == server.id) SecondaryTeal.copy(alpha = 0.15f) else Color.White
+                                ),
+                                shape = RoundedCornerShape(12.dp),
+                                border = if (selectedServerID == server.id) BorderStroke(2.dp, SecondaryTeal) else null
+                            ) {
+                                Column(modifier = Modifier.padding(16.dp)) {
+                                    Text(server.name, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
+                                    Text(
+                                        "${server.ipAddress}:${server.port}",
+                                        fontSize = 12.sp,
+                                        color = TextSecondary,
+                                        modifier = Modifier.padding(top = 4.dp)
+                                    )
+                                }
                             }
                         }
                     }
                 }
+
+                val disabledReason = when {
+                    playerNickname.isEmpty() -> "Введите ник, чтобы подключиться"
+                    selectedServerID == null -> "Выберите сервер из списка, чтобы подключиться"
+                    else -> null
+                }
+                if (disabledReason != null) {
+                    Text(
+                        disabledReason,
+                        fontSize = 12.sp,
+                        color = AccentRed,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 8.dp)
+                    )
+                }
+
+                Button(
+                    onClick = { viewModel.connectAsPlayer() },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp)
+                        .padding(bottom = 16.dp),
+                    enabled = playerNickname.isNotEmpty() && selectedServerID != null,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = SecondaryTeal,
+                        contentColor = Color.White,
+                        // Color.Gray (#808080) давал контраст с белым текстом ~4:1 — на грани читаемости.
+                        // Более тёмный серый даёт ~6:1, текст остаётся чётким и в неактивном состоянии.
+                        disabledContainerColor = Color(0xFF616161),
+                        disabledContentColor = Color.White
+                    ),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Подключиться", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                }
+            } else {
+                var manualHostText by remember { mutableStateOf("") }
+                val context = LocalContext.current
+
+                val qrLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
+                    if (result.contents != null) {
+                        manualHostText = result.contents
+                    }
+                }
+                val cameraPermissionLauncher = rememberLauncherForActivityResult(
+                    ActivityResultContracts.RequestPermission()
+                ) { granted ->
+                    if (granted) {
+                        qrLauncher.launch(
+                            ScanOptions()
+                                .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                                .setPrompt("Наведите камеру на QR-код ведущего")
+                                .setBeepEnabled(false)
+                        )
+                    }
+                }
+                fun launchQrScan() {
+                    val hasPermission = ContextCompat.checkSelfPermission(
+                        context, Manifest.permission.CAMERA
+                    ) == PackageManager.PERMISSION_GRANTED
+                    if (hasPermission) {
+                        qrLauncher.launch(
+                            ScanOptions()
+                                .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                                .setPrompt("Наведите камеру на QR-код ведущего")
+                                .setBeepEnabled(false)
+                        )
+                    } else {
+                        cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                    }
+                }
+
+                Text(
+                    "IP-адрес ведущего",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = TextPrimary,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                Text(
+                    "В сети хотспота автопоиск ненадёжен — отсканируйте QR-код с экрана ведущего или введите IP-адрес вручную",
+                    fontSize = 12.sp,
+                    color = TextSecondary,
+                    modifier = Modifier.padding(bottom = 12.dp)
+                )
+                OutlinedButton(
+                    onClick = { launchQrScan() },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp)
+                        .padding(bottom = 12.dp),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("📷 Сканировать QR-код", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = PrimaryBlue)
+                }
+                OutlinedTextField(
+                    value = manualHostText,
+                    onValueChange = { manualHostText = it },
+                    label = { Text("IP:порт (например 192.168.1.5:5000)") },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 12.dp),
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp)
+                )
+                Button(
+                    onClick = { viewModel.connectAsPlayerManual(manualHostText) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp)
+                        .padding(bottom = 16.dp),
+                    enabled = playerNickname.isNotEmpty() && manualHostText.isNotBlank(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = PrimaryBlue,
+                        contentColor = Color.White,
+                        disabledContainerColor = Color(0xFF616161),
+                        disabledContentColor = Color.White
+                    ),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Подключиться по IP", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                }
             }
-        }
-
-        val disabledReason = when {
-            playerNickname.isEmpty() -> "Введите ник, чтобы подключиться"
-            selectedServerID == null -> "Выберите сервер из списка, чтобы подключиться"
-            else -> null
-        }
-        if (disabledReason != null) {
-            Text(
-                disabledReason,
-                fontSize = 12.sp,
-                color = AccentRed,
-                textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp)
-            )
-        }
-
-        Button(
-            onClick = { viewModel.connectAsPlayer() },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp)
-                .height(50.dp),
-            enabled = playerNickname.isNotEmpty() && selectedServerID != null,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = SecondaryTeal,
-                contentColor = Color.White,
-                // Color.Gray (#808080) давал контраст с белым текстом ~4:1 — на грани читаемости.
-                // Более тёмный серый даёт ~6:1, текст остаётся чётким и в неактивном состоянии.
-                disabledContainerColor = Color(0xFF616161),
-                disabledContentColor = Color.White
-            ),
-            shape = RoundedCornerShape(12.dp)
-        ) {
-            Text("Подключиться", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
         }
     }
 }

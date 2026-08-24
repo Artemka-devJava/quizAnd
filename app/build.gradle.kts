@@ -69,7 +69,11 @@ dependencies {
     
     // Network Discovery (mDNS/Bonjour alternative for Android)
     implementation("org.jmdns:jmdns:3.5.12")
-    
+
+    // QR-код: генерация (показ IP хоста) и сканирование камерой (у игрока)
+    implementation("com.google.zxing:core:3.5.3")
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)

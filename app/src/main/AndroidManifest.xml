@@ -9,6 +9,10 @@
     <!-- Без этого разрешения Android фильтрует входящие multicast-пакеты Wi-Fi,
          из-за чего mDNS/Bonjour-объявления от других устройств (в т.ч. iOS) не доходят. -->
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <!-- Для сканирования QR-кода с IP-адресом хоста -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
 
     <application
         android:allowBackup="true"
