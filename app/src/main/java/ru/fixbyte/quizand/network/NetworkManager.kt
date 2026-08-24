@@ -80,6 +80,8 @@ class NetworkManager(
     private var serverSocket: ServerSocket? = null
     private var clientSocket: Socket? = null
     private val peers = mutableMapOf<String, PeerConnection>()
+    /** Ник хоста — используется, чтобы не пускать игрока с именем, совпадающим с именем ведущего. */
+    private var hostNickname: String = ""
 
     private var jmdns: JmDNS? = null
     private var registeredServiceInfo: ServiceInfo? = null
@@ -106,6 +108,7 @@ class NetworkManager(
                 status = ConnectionStatus.CONNECTING
 
                 val trimmedName = serviceName.trim().ifEmpty { "Host" }
+                hostNickname = trimmedName
 
                 val socket = withContext(Dispatchers.IO) { ServerSocket(port) }
                 serverSocket = socket
@@ -419,6 +422,32 @@ class NetworkManager(
                             Log.d(TAG, "Получено сообщение: kind=${message.kind} sender=${message.senderNickname} player=${message.player?.nickname}")
 
                             if (message.kind == MessageKind.HELLO.toString() && message.player != null) {
+                                val incomingNickname = message.player!!.nickname.trim()
+                                val nameTaken = mode == NetworkMode.HOST && (
+                                    peers.values.any {
+                                        it !== peer && it.playerInfo?.nickname?.trim()
+                                            ?.equals(incomingNickname, ignoreCase = true) == true
+                                    } || incomingNickname.equals(hostNickname.trim(), ignoreCase = true)
+                                )
+
+                                if (nameTaken) {
+                                    Log.d(TAG, "HELLO отклонён: ник \"$incomingNickname\" уже занят")
+                                    val errorMsg = GameMessage(
+                                        kind = MessageKind.ERROR.toString(),
+                                        senderID = "server",
+                                        text = "Ник \"$incomingNickname\" уже занят. Выберите другой."
+                                    )
+                                    try {
+                                        val errorData = (json.encodeToString(errorMsg) + "\n").toByteArray()
+                                        peer.outputStream?.write(errorData)
+                                        peer.outputStream?.flush()
+                                    } catch (e: Exception) { }
+                                    delay(150)
+                                    peers.remove(peer.id)
+                                    peer.socket.close()
+                                    break
+                                }
+
                                 peer.playerInfo = message.player
                                 withContext(Dispatchers.Main) {
                                     onEvent?.invoke(NetworkEvent.PlayerConnected(message.player!!))

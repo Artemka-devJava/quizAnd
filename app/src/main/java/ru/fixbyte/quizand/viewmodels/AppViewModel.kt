@@ -475,6 +475,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
                     MessageKind.ERROR.toString() -> {
                         _connectionHint.value = msg.text ?: "Ошибка сети"
+                        if (_selectedRole.value == UserRole.PLAYER && _phase.value != AppPhase.PLAYER_QUESTION) {
+                            network.stopAll()
+                            _selectedServerID.value = null
+                            _phase.value = AppPhase.PLAYER_JOIN
+                            refreshServerDiscovery()
+                        }
                     }
 
                     else -> {}
