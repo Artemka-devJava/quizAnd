@@ -1,5 +1,7 @@
 # Quiz Multiplayer - Android версия
 
+**Версия: 0.1**
+
 Многопользовательское квиз-приложение для Android, похожее на iOS версию из репозитория [quizIOS2](https://github.com/Artemka-devJava/quizIOS2.git).
 
 ## Особенности

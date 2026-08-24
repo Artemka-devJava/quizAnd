@@ -17,9 +17,13 @@ android {
         minSdk = 24
         targetSdk = 36
         versionCode = 1
-        versionName = "1.0"
+        versionName = "0.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Версия в названии приложения на телефоне — чтобы отличать разные
+        // установленные сборки друг от друга при тестировании на устройстве.
+        resValue("string", "app_name", "Я знаю $versionName")
     }
 
     signingConfigs {
@@ -44,6 +48,7 @@ android {
     }
     buildFeatures {
         compose = true
+        resValues = true
     }
 }
 
