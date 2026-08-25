@@ -85,6 +85,14 @@ class NetworkManager(
     /** Ник хоста — используется, чтобы не пускать игрока с именем, совпадающим с именем ведущего. */
     private var hostNickname: String = ""
 
+    /** Устанавливается ViewModel-ом при старте игры хостом — с этого момента новые
+     *  подключения отклоняются (нельзя зайти посреди уже идущей игры). */
+    var gameInProgress: Boolean = false
+
+    /** true между вызовом stopClientOnly()/stopAll() и фактическим закрытием сокета —
+     *  чтобы отличить "игрок сам вышел" от "хост пропал/сеть легла" в receive-луп. */
+    private var intentionalClientStop = false
+
     private var jmdns: JmDNS? = null
     private var registeredServiceInfo: ServiceInfo? = null
     private var serviceListener: ServiceListener? = null
@@ -426,6 +434,8 @@ class NetworkManager(
     }
 
     fun stopAll() {
+        intentionalClientStop = true
+        gameInProgress = false
         stopBrowsingServers()
 
         registeredServiceInfo?.let { info ->
@@ -480,6 +490,25 @@ class NetworkManager(
 
                             if (message.kind == MessageKind.HELLO.toString() && message.player != null) {
                                 val incomingNickname = message.player!!.nickname.trim()
+
+                                if (mode == NetworkMode.HOST && gameInProgress) {
+                                    Log.d(TAG, "HELLO отклонён: игра уже началась, новые подключения закрыты")
+                                    val errorMsg = GameMessage(
+                                        kind = MessageKind.ERROR.toString(),
+                                        senderID = "server",
+                                        text = "Игра уже началась. Дождитесь следующей игры."
+                                    )
+                                    try {
+                                        val errorData = (json.encodeToString(errorMsg) + "\n").toByteArray()
+                                        peer.outputStream?.write(errorData)
+                                        peer.outputStream?.flush()
+                                    } catch (e: Exception) { }
+                                    delay(150)
+                                    peers.remove(peer.id)
+                                    peer.socket.close()
+                                    break
+                                }
+
                                 val nameTaken = mode == NetworkMode.HOST && (
                                     peers.values.any {
                                         it !== peer && it.playerInfo?.nickname?.trim()
@@ -525,8 +554,21 @@ class NetworkManager(
                     }
                 }
             } catch (e: Exception) {
+                // Обрыв сокета (хост пропал/сеть легла) — реальная обработка ниже в finally,
+                // общая и для нормального EOF (readLine() == null), и для этого исключения.
+            } finally {
                 if (isClient) {
-                    // Переподключение управляется на уровне ViewModel/UI при необходимости.
+                    // intentionalClientStop=true означает, что игрок сам вызвал stopClientOnly()/
+                    // stopAll() (например, нажал "Назад") — тогда разрыв ожидаемый и уведомлять
+                    // ViewModel не нужно. Иначе соединение потеряно не по нашей инициативе —
+                    // хост вышел из игры, закрыл приложение или сеть легла.
+                    if (!intentionalClientStop) {
+                        Log.d(TAG, "HostConnectionLost: соединение с хостом потеряно не по инициативе игрока")
+                        withContext(Dispatchers.Main) {
+                            onEvent?.invoke(NetworkEvent.HostConnectionLost)
+                        }
+                    }
+                    intentionalClientStop = false
                 } else {
                     peers.remove(peer.id)
                     peer.playerInfo?.let {
@@ -539,6 +581,10 @@ class NetworkManager(
         }
     }
 
+    /** Вызывается и как защитная очистка перед НОВЫМ подключением (connectToServer),
+     *  и как часть намеренной остановки (тогда флаг уже выставлен в stopAll()) —
+     *  сам по себе не должен помечать текущее соединение как "остановлено намеренно",
+     *  иначе разрыв самого нового соединения с хостом молча игнорировался бы. */
     private fun stopClientOnly() {
         clientSocket?.close()
         clientSocket = null

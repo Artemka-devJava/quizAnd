@@ -101,6 +101,10 @@ sealed class NetworkEvent {
     data class PlayerConnected(val player: PlayerInfo) : NetworkEvent()
     data class PlayerDisconnected(val player: PlayerInfo) : NetworkEvent()
     data class Message(val message: GameMessage) : NetworkEvent()
+    /** Игрок потерял TCP-соединение с хостом не по своей инициативе (хост вышел из
+     *  игры, закрыл приложение или сеть легла) — в отличие от игрока, закрывшего
+     *  соединение самостоятельно кнопкой "Назад"/"Выход". */
+    object HostConnectionLost : NetworkEvent()
 }
 
 data class DiscoveredServer(

@@ -166,6 +166,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         _phase.value = AppPhase.HOST_CONTROL
+        // С этого момента новые подключения отклоняются — нельзя зайти посреди игры.
+        network.gameInProgress = true
 
         viewModelScope.launch {
             val msg = GameMessage(
@@ -430,6 +432,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 broadcastPlayersIfHost()
             }
 
+            is NetworkEvent.HostConnectionLost -> {
+                // Хост вышел из игры/закрыл приложение, или сеть легла — соединение
+                // разорвано не по инициативе игрока. Автоматически возвращаем его
+                // на экран поиска, а не оставляем висеть в ожидании ответа хоста.
+                if (_selectedRole.value == UserRole.PLAYER) {
+                    returnPlayerToJoinScreen("Ведущий покинул игру")
+                }
+            }
+
             is NetworkEvent.Message -> {
                 val msg = event.message
                 when (msg.kind) {
@@ -519,12 +530,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     }
 
                     MessageKind.ERROR.toString() -> {
-                        _connectionHint.value = msg.text ?: "Ошибка сети"
                         if (_selectedRole.value == UserRole.PLAYER && _phase.value != AppPhase.PLAYER_QUESTION) {
-                            network.stopAll()
-                            _selectedServerID.value = null
-                            _phase.value = AppPhase.PLAYER_JOIN
-                            refreshServerDiscovery()
+                            returnPlayerToJoinScreen(msg.text ?: "Ошибка сети")
+                        } else {
+                            _connectionHint.value = msg.text ?: "Ошибка сети"
                         }
                     }
 
@@ -532,6 +541,27 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+    }
+
+    /** Возвращает игрока на экран поиска хоста, сбрасывая состояние игры/раунда —
+     *  используется и при явной ошибке от сервера (ник занят и т.п.), и при потере
+     *  соединения с хостом. */
+    private fun returnPlayerToJoinScreen(hint: String) {
+        network.stopAll()
+        _selectedServerID.value = null
+        _players.value = emptyList()
+
+        _roundIsOpen.value = false
+        _activeResponder.value = null
+        _buzzHistory.value = emptyList()
+        _lastResult.value = null
+        _localHasAttemptedInRound.value = false
+        _localIsCurrentResponder.value = false
+        attemptedPlayerIDsInRound.clear()
+
+        _phase.value = AppPhase.PLAYER_JOIN
+        _connectionHint.value = hint
+        refreshServerDiscovery()
     }
 
     private fun broadcastPlayersIfHost() {
