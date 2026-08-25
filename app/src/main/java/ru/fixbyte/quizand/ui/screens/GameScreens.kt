@@ -40,7 +40,6 @@ import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
-import ru.fixbyte.quizand.models.ConnectionMode
 import ru.fixbyte.quizand.models.UserRole
 import ru.fixbyte.quizand.ui.theme.*
 import ru.fixbyte.quizand.util.generateQrBitmap
@@ -88,7 +87,7 @@ fun SplashScreen() {
 }
 
 @Composable
-fun ConnectionModeSelectionScreen(viewModel: AppViewModel) {
+fun RoleSelectionScreen(viewModel: AppViewModel) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -98,94 +97,6 @@ fun ConnectionModeSelectionScreen(viewModel: AppViewModel) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier
-                .padding(24.dp)
-                .fillMaxWidth()
-        ) {
-            Text(
-                "Как соединены телефоны?",
-                fontSize = 26.sp,
-                fontWeight = FontWeight.Bold,
-                color = TextPrimary,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(bottom = 8.dp)
-            )
-            Text(
-                "От этого зависит, как игроки будут находить ведущего",
-                fontSize = 13.sp,
-                color = TextSecondary,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(bottom = 32.dp)
-            )
-
-            Button(
-                onClick = { viewModel.chooseConnectionMode(ConnectionMode.ROUTER) },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 64.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = PrimaryBlue,
-                    contentColor = Color.White
-                ),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("Через Wi-Fi роутер", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                    Text(
-                        "Оба телефона в одной домашней/офисной сети — автопоиск хоста",
-                        fontSize = 11.sp,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(top = 2.dp)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            OutlinedButton(
-                onClick = { viewModel.chooseConnectionMode(ConnectionMode.HOTSPOT) },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 64.dp),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("Через точку доступа телефона", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = PrimaryBlue)
-                    Text(
-                        "Один телефон раздаёт хотспот — подключение по IP-адресу",
-                        fontSize = 11.sp,
-                        color = TextSecondary,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(top = 2.dp)
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun RoleSelectionScreen(viewModel: AppViewModel) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(BackgroundLight)
-    ) {
-        Button(
-            onClick = { viewModel.backToConnectionModeSelection() },
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(16.dp)
-                .clip(RoundedCornerShape(12.dp)),
-            colors = ButtonDefaults.buttonColors(containerColor = Color.White),
-            shape = RoundedCornerShape(12.dp)
-        ) {
-            Text("Назад", fontSize = 12.sp, color = TextPrimary)
-        }
-
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier
-                .align(Alignment.Center)
                 .padding(24.dp)
                 .fillMaxWidth()
         ) {
@@ -241,7 +152,6 @@ fun HostLobbyScreen(viewModel: AppViewModel) {
     val hostNickname by viewModel.hostNickname.collectAsState()
     val players by viewModel.players.collectAsState()
     val connectionHint by viewModel.connectionHint.collectAsState()
-    val connectionMode by viewModel.connectionMode.collectAsState()
     val hostLocalIp by viewModel.hostLocalIp.collectAsState()
     val hostPortText by viewModel.hostPortText.collectAsState()
 
@@ -340,7 +250,7 @@ fun HostLobbyScreen(viewModel: AppViewModel) {
                 }
             }
 
-            if (connectionMode == ConnectionMode.HOTSPOT && hostLocalIp != null) {
+            if (hostLocalIp != null) {
                 var showQrDialog by remember { mutableStateOf(false) }
                 val hostAddress = "$hostLocalIp:$hostPortText"
 
@@ -744,8 +654,6 @@ fun PlayerJoinScreen(viewModel: AppViewModel) {
     val selectedServerID by viewModel.selectedServerID.collectAsState()
     val discoveredServers by viewModel.discoveredServers.collectAsState()
     val connectionHint by viewModel.connectionHint.collectAsState()
-    val connectionMode by viewModel.connectionMode.collectAsState()
-    val isRouterMode = connectionMode != ConnectionMode.HOTSPOT
 
     Column(
         modifier = Modifier
@@ -787,26 +695,25 @@ fun PlayerJoinScreen(viewModel: AppViewModel) {
                 shape = RoundedCornerShape(12.dp)
             )
 
-            if (isRouterMode) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        "Доступные серверы",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = TextPrimary
-                    )
-                    TextButton(onClick = { viewModel.refreshServerDiscovery() }) {
-                        Text("Обновить", fontSize = 14.sp, color = PrimaryBlue)
-                    }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "Доступные серверы",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = TextPrimary
+                )
+                TextButton(onClick = { viewModel.refreshServerDiscovery() }) {
+                    Text("Обновить", fontSize = 14.sp, color = PrimaryBlue)
                 }
+            }
 
-                if (discoveredServers.isEmpty()) {
+            if (discoveredServers.isEmpty()) {
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -905,7 +812,10 @@ fun PlayerJoinScreen(viewModel: AppViewModel) {
                 ) {
                     Text("Подключиться", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                 }
-            } else {
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+            run {
                 var manualHostText by remember { mutableStateOf("") }
                 val context = LocalContext.current
 
@@ -943,14 +853,14 @@ fun PlayerJoinScreen(viewModel: AppViewModel) {
                 }
 
                 Text(
-                    "IP-адрес ведущего",
+                    "Не нашли хоста в списке?",
                     fontSize = 16.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = TextPrimary,
                     modifier = Modifier.padding(bottom = 8.dp)
                 )
                 Text(
-                    "В сети хотспота автопоиск ненадёжен — отсканируйте QR-код с экрана ведущего или введите IP-адрес вручную",
+                    "Автопоиск не всегда работает (например, в сети хотспота) — отсканируйте QR-код с экрана ведущего или введите его IP-адрес вручную",
                     fontSize = 12.sp,
                     color = TextSecondary,
                     modifier = Modifier.padding(bottom = 12.dp)

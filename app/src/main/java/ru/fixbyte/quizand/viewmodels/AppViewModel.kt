@@ -22,11 +22,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val _selectedRole = MutableStateFlow<UserRole?>(null)
     val selectedRole: StateFlow<UserRole?> = _selectedRole
 
-    private val _connectionMode = MutableStateFlow<ConnectionMode?>(null)
-    val connectionMode: StateFlow<ConnectionMode?> = _connectionMode
-
     /** Собственный IP-адрес хоста в текущей Wi-Fi-сети — показывается игрокам
-     *  для ручного подключения, когда сеть организована через хотспот. */
+     *  для ручного подключения/QR как запасной вариант, если у них не сработает автопоиск. */
     private val _hostLocalIp = MutableStateFlow<String?>(null)
     val hostLocalIp: StateFlow<String?> = _hostLocalIp
 
@@ -98,17 +95,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private fun bootSplash() {
         viewModelScope.launch {
             delay(2000)
-            _phase.value = AppPhase.CONNECTION_MODE_SELECTION
+            _phase.value = AppPhase.ROLE_SELECTION
         }
-    }
-
-    fun chooseConnectionMode(mode: ConnectionMode) {
-        _connectionMode.value = mode
-        _phase.value = AppPhase.ROLE_SELECTION
-    }
-
-    fun backToConnectionModeSelection() {
-        _phase.value = AppPhase.CONNECTION_MODE_SELECTION
     }
 
     fun chooseRole(role: UserRole) {
@@ -119,14 +107,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         if (role == UserRole.PLAYER) {
-            if (_connectionMode.value == ConnectionMode.ROUTER) {
-                refreshServerDiscovery()
-                _connectionHint.value = "Поиск ведущих в локальной сети..."
-            } else {
-                // В хотспот-сетях mDNS/multicast часто не доходит между устройствами —
-                // не тратим время на ненадёжный автопоиск, сразу предлагаем ручной ввод IP.
-                _connectionHint.value = "Введите IP-адрес хоста вручную"
-            }
+            // Не спрашиваем, роутер это или хотспот: всегда пробуем автопоиск (mDNS +
+            // скан подсети) в фоне, а ручной ввод IP/QR остаётся рядом как запасной
+            // вариант на случай, если автопоиск в этой сети не работает.
+            refreshServerDiscovery()
+            _connectionHint.value = "Поиск ведущих в локальной сети..."
         }
     }
 
