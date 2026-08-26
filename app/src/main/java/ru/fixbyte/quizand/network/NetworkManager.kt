@@ -132,6 +132,14 @@ class NetworkManager(
      *  подключения отклоняются (нельзя зайти посреди уже идущей игры). */
     var gameInProgress: Boolean = false
 
+    /** Устанавливается ViewModel-ом: проверяет, известен ли этот id игрока хосту уже
+     *  (например, есть запись в таблице очков) — то есть это не новый игрок, а тот же
+     *  самый игрок, переподключающийся после обрыва связи посреди игры. Такому игроку
+     *  HELLO не отклоняется флагом [gameInProgress], иначе персистентный playerID
+     *  (см. AppViewModel.localPlayerID) не спасал бы от потери прогресса именно в
+     *  том сценарии, ради которого он и был добавлен — обрыв связи в разгар игры. */
+    var isKnownPlayerId: ((String) -> Boolean)? = null
+
     /** true между вызовом stopClientOnly()/stopAll() и фактическим закрытием сокета —
      *  чтобы отличить "игрок сам вышел" от "хост пропал/сеть легла" в receive-луп. */
     private var intentionalClientStop = false
@@ -569,7 +577,8 @@ class NetworkManager(
                             if (message.kind == MessageKind.HELLO.toString() && message.player != null) {
                                 val incomingNickname = message.player!!.nickname.trim()
 
-                                if (mode == NetworkMode.HOST && gameInProgress) {
+                                val isReturningKnownPlayer = isKnownPlayerId?.invoke(message.player!!.id) == true
+                                if (mode == NetworkMode.HOST && gameInProgress && !isReturningKnownPlayer) {
                                     Log.d(TAG, "HELLO отклонён: игра уже началась, новые подключения закрыты")
                                     val errorMsg = GameMessage(
                                         kind = MessageKind.ERROR.toString(),

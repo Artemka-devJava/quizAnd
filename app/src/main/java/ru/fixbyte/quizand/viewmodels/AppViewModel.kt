@@ -1,6 +1,7 @@
 package ru.fixbyte.quizand.viewmodels
 
 import android.app.Application
+import android.content.Context
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -13,6 +14,8 @@ import ru.fixbyte.quizand.network.NetworkManager
 import java.util.UUID
 
 private const val TAG = "YaZnayuNetwork"
+private const val PREFS_NAME = "yaznayu_prefs"
+private const val KEY_PLAYER_ID = "player_id"
 
 class AppViewModel(application: Application) : AndroidViewModel(application) {
     // UI State
@@ -75,7 +78,17 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val _discoveredServers = MutableStateFlow<List<DiscoveredServer>>(emptyList())
     val discoveredServers: StateFlow<List<DiscoveredServer>> = _discoveredServers
 
-    private val localPlayerID = UUID.randomUUID().toString()
+    /** Персистентный ID этого устройства как игрока — раньше генерировался заново при
+     *  каждом запуске приложения, из-за чего обрыв связи в середине игры и повторное
+     *  подключение показывали игрока как нового участника с нулевым счётом (хост хранит
+     *  счёт по id игрока и никогда не обнуляет уже существующую запись при переподключении —
+     *  единственным недостающим звеном был именно непостоянный id на стороне игрока). */
+    private val localPlayerID: String = run {
+        val prefs = getApplication<Application>().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.getString(KEY_PLAYER_ID, null) ?: UUID.randomUUID().toString().also { newID ->
+            prefs.edit().putString(KEY_PLAYER_ID, newID).apply()
+        }
+    }
     private val network = NetworkManager(getApplication(), viewModelScope)
     private var attemptedPlayerIDsInRound = mutableSetOf<String>()
 
@@ -86,6 +99,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         network.onEvent = { event ->
             handleNetworkEvent(event)
         }
+
+        // Игрок с уже известным (например, ранее подключавшимся в этой игре) id
+        // не отклоняется правилом "игра уже началась" — это не новый игрок, а
+        // переподключение после обрыва связи, и счёт по этому id уже сохранён.
+        network.isKnownPlayerId = { id -> _scores.value.containsKey(id) }
 
         // Реактивно обновляем список хостов по мере того, как JmDNS резолвит найденные сервисы,
         // а не только один раз после фиксированной задержки.
@@ -291,6 +309,32 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 )
                 network.send(clearMsg)
             }
+        }
+    }
+
+    /** Обнуляет очки всех игроков (включая ранее известные id отключившихся игроков —
+     *  чтобы переподключение после сброса не выглядело новым игроком), не разрывая
+     *  соединения и не покидая лобби — в отличие от resetToRoleSelection(). */
+    fun resetScoresAsHost() {
+        if (_selectedRole.value != UserRole.HOST) return
+
+        _scores.value = _scores.value.keys.associateWith { 0 }
+
+        _roundIsOpen.value = false
+        _activeResponder.value = null
+        _buzzHistory.value = emptyList()
+        _lastResult.value = null
+        _localHasAttemptedInRound.value = false
+        _localIsCurrentResponder.value = false
+        attemptedPlayerIDsInRound.clear()
+
+        viewModelScope.launch {
+            val msg = GameMessage(
+                kind = MessageKind.SCORES_RESET.toString(),
+                senderID = localPlayerID,
+                senderNickname = _hostNickname.value
+            )
+            network.send(msg)
         }
     }
 
@@ -517,6 +561,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                             val newScores = _scores.value.toMutableMap()
                             newScores[msg.player!!.id] = msg.scoreValue!!
                             _scores.value = newScores
+                        }
+                    }
+
+                    MessageKind.SCORES_RESET.toString() -> {
+                        _scores.value = _scores.value.keys.associateWith { 0 }
+                        _roundIsOpen.value = false
+                        _activeResponder.value = null
+                        _buzzHistory.value = emptyList()
+                        _lastResult.value = null
+                        _localHasAttemptedInRound.value = false
+                        _localIsCurrentResponder.value = false
+                        attemptedPlayerIDsInRound.clear()
+                        if (_selectedRole.value == UserRole.PLAYER) {
+                            _connectionHint.value = "Ведущий сбросил счёт"
                         }
                     }
 

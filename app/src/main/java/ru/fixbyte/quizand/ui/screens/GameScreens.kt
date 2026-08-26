@@ -41,6 +41,7 @@ import com.journeyapps.barcodescanner.ScanOptions
 import ru.fixbyte.quizand.models.UserRole
 import ru.fixbyte.quizand.ui.theme.*
 import ru.fixbyte.quizand.util.generateQrBitmap
+import ru.fixbyte.quizand.util.triggerButtonFeedback
 import ru.fixbyte.quizand.viewmodels.AppViewModel
 
 @Composable
@@ -470,10 +471,12 @@ private fun HostSettingsDialog(viewModel: AppViewModel, onDismiss: () -> Unit) {
 
 @Composable
 fun HostControlScreen(viewModel: AppViewModel) {
+    val context = LocalContext.current
     val players by viewModel.players.collectAsState()
     val roundIsOpen by viewModel.roundIsOpen.collectAsState()
     val activeResponder by viewModel.activeResponder.collectAsState()
     val scores by viewModel.scores.collectAsState()
+    var showResetScoresDialog by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -582,7 +585,10 @@ fun HostControlScreen(viewModel: AppViewModel) {
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Button(
-                                onClick = { viewModel.judgeCurrentResponder(true) },
+                                onClick = {
+                                    triggerButtonFeedback(context)
+                                    viewModel.judgeCurrentResponder(true)
+                                },
                                 modifier = Modifier
                                     .weight(1f)
                                     .height(48.dp),
@@ -592,7 +598,10 @@ fun HostControlScreen(viewModel: AppViewModel) {
                                 Text("✓ Верно", fontWeight = FontWeight.SemiBold, color = Color.White)
                             }
                             Button(
-                                onClick = { viewModel.judgeCurrentResponder(false) },
+                                onClick = {
+                                    triggerButtonFeedback(context)
+                                    viewModel.judgeCurrentResponder(false)
+                                },
                                 modifier = Modifier
                                     .weight(1f)
                                     .height(48.dp),
@@ -615,6 +624,7 @@ fun HostControlScreen(viewModel: AppViewModel) {
         ) {
             Button(
                 onClick = {
+                    triggerButtonFeedback(context)
                     if (roundIsOpen) viewModel.closeRoundAsHost()
                     else viewModel.openRoundAsHost()
                 },
@@ -633,7 +643,43 @@ fun HostControlScreen(viewModel: AppViewModel) {
                     color = Color.White
                 )
             }
+
+            OutlinedButton(
+                onClick = { showResetScoresDialog = true },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(44.dp),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentRed),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text("Сбросить счёт", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            }
         }
+    }
+
+    if (showResetScoresDialog) {
+        AlertDialog(
+            onDismissRequest = { showResetScoresDialog = false },
+            title = { Text("Сбросить счёт?", fontWeight = FontWeight.Bold) },
+            text = { Text("Очки всех игроков обнулятся, но лобби и подключения сохранятся — игра продолжится с того же места.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        triggerButtonFeedback(context)
+                        viewModel.resetScoresAsHost()
+                        showResetScoresDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = AccentRed)
+                ) {
+                    Text("Сбросить", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showResetScoresDialog = false }) {
+                    Text("Отмена")
+                }
+            }
+        )
     }
 }
 
@@ -942,6 +988,7 @@ fun PlayerWaitingScreen(viewModel: AppViewModel) {
 
 @Composable
 fun PlayerQuestionScreen(viewModel: AppViewModel) {
+    val context = LocalContext.current
     val players by viewModel.players.collectAsState()
     val roundIsOpen by viewModel.roundIsOpen.collectAsState()
     val activeResponder by viewModel.activeResponder.collectAsState()
@@ -1066,7 +1113,10 @@ fun PlayerQuestionScreen(viewModel: AppViewModel) {
             when {
                 roundIsOpen && !localIsCurrentResponder && !localHasAttemptedInRound -> {
                     Button(
-                        onClick = { viewModel.playerPressedAnswerButton() },
+                        onClick = {
+                            triggerButtonFeedback(context)
+                            viewModel.playerPressedAnswerButton()
+                        },
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(80.dp)

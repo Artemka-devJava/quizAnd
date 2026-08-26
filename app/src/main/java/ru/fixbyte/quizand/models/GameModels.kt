@@ -68,6 +68,9 @@ enum class MessageKind {
     ANSWER_RESULT {
         override fun toString() = "answerResult"
     },
+    SCORES_RESET {
+        override fun toString() = "scoresReset"
+    },
     ERROR {
         override fun toString() = "error"
     }
