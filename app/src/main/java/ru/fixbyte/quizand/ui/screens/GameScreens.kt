@@ -14,7 +14,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -32,7 +31,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -153,7 +151,7 @@ fun HostLobbyScreen(viewModel: AppViewModel) {
     val players by viewModel.players.collectAsState()
     val connectionHint by viewModel.connectionHint.collectAsState()
     val hostLocalIp by viewModel.hostLocalIp.collectAsState()
-    val hostPortText by viewModel.hostPortText.collectAsState()
+    val hostBoundPort by viewModel.hostBoundPort.collectAsState()
 
     var showRulesDialog by remember { mutableStateOf(false) }
     var showSettingsDialog by remember { mutableStateOf(false) }
@@ -250,9 +248,9 @@ fun HostLobbyScreen(viewModel: AppViewModel) {
                 }
             }
 
-            if (hostLocalIp != null) {
+            if (hostLocalIp != null && hostBoundPort != null) {
                 var showQrDialog by remember { mutableStateOf(false) }
-                val hostAddress = "$hostLocalIp:$hostPortText"
+                val hostAddress = "$hostLocalIp:$hostBoundPort"
 
                 Card(
                     modifier = Modifier
@@ -431,7 +429,6 @@ private fun RuleRow(number: String, text: String) {
 @Composable
 private fun HostSettingsDialog(viewModel: AppViewModel, onDismiss: () -> Unit) {
     val hostNickname by viewModel.hostNickname.collectAsState()
-    val hostPortText by viewModel.hostPortText.collectAsState()
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -445,16 +442,8 @@ private fun HostSettingsDialog(viewModel: AppViewModel, onDismiss: () -> Unit) {
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp)
                 )
-                OutlinedTextField(
-                    value = hostPortText,
-                    onValueChange = { viewModel.onHostPortTextChanged(it) },
-                    label = { Text("Порт") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp)
-                )
                 Text(
-                    "Текущий: $hostPortText",
+                    "Порт выбирается автоматически (5001-5003)",
                     fontSize = 12.sp,
                     color = TextSecondary
                 )
@@ -878,7 +867,7 @@ fun PlayerJoinScreen(viewModel: AppViewModel) {
                 OutlinedTextField(
                     value = manualHostText,
                     onValueChange = { manualHostText = it },
-                    label = { Text("IP:порт (например 192.168.1.5:5000)") },
+                    label = { Text("IP:порт (например 192.168.1.5:5001)") },
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(bottom = 12.dp),
@@ -1085,13 +1074,7 @@ fun PlayerQuestionScreen(viewModel: AppViewModel) {
                         colors = ButtonDefaults.buttonColors(containerColor = SecondaryTeal),
                         shape = RoundedCornerShape(16.dp)
                     ) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center
-                        ) {
-                            Text("BUZZ!", fontSize = 32.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
-                            Text("Ответить", fontSize = 12.sp, color = Color.White.copy(alpha = 0.8f))
-                        }
+                        Text("Ответить", fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
                     }
                 }
                 localIsCurrentResponder -> {

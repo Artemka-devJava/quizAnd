@@ -53,10 +53,19 @@ class NetworkManager(
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Main + Job())
 ) {
     companion object {
-        const val DEFAULT_PORT = 5000
+        // Хост всегда пробует эти порты по порядку и занимает первый свободный —
+        // раньше порт был произвольным (любое значение из поля настроек), из-за
+        // чего скан подсети должен был бы перебирать все 65535 портов на каждый IP,
+        // чтобы гарантированно найти хост. Фиксированный небольшой набор портов
+        // делает скан быстрым и предсказуемым на обеих сторонах (хост и игрок).
+        val CANDIDATE_PORTS = listOf(5001, 5002, 5003)
         // JmDNS ожидает домен ".local." в типе сервиса — тот же формат,
         // в котором Bonjour регистрирует сервисы на iOS (NWListener с domain: nil).
         const val SERVICE_TYPE = "_yaznayu._tcp.local."
+        // Имя-заглушка для серверов, найденных сканом подсети (без человекочитаемого
+        // mDNS-имени) — используется как маркер в addOrUpdateDiscoveredServer, чтобы
+        // не затирать уже известное настоящее имя того же сервера.
+        private const val GENERIC_SERVER_NAME_PREFIX = "Хост "
     }
 
     private var _mode = NetworkMode.IDLE
@@ -72,7 +81,41 @@ class NetworkManager(
         set(value) { _status = value }
 
     val discoveredServers: List<DiscoveredServer>
-        get() = _discoveredServers.values.toList()
+        get() = synchronized(_discoveredServers) { _discoveredServers.values.toList() }
+
+    /**
+     * mDNS и скан подсети хранят один и тот же физический сервер под РАЗНЫМИ
+     * ключами карты (`event.name` вида "Ведущий" против "scan:ip:port"), поэтому
+     * без дедупликации по факту ip:port один и тот же хост мог появиться в списке
+     * дважды — один раз с человекочитаемым именем, второй раз как "Хост <ip>".
+     * Оставляем одну запись на физический сервер и не даём записи-заглушке
+     * затереть уже известное человекочитаемое имя.
+     *
+     * Скан подсети запускает до 32 параллельных корутин на Dispatchers.IO, каждая
+     * из которых может вызвать этот метод одновременно — обычный mutableMapOf не
+     * потокобезопасен для последовательности "проверить-затем-записать", поэтому
+     * вся проверка и запись выполняются в одном synchronized-блоке.
+     */
+    private fun addOrUpdateDiscoveredServer(candidate: DiscoveredServer) {
+        synchronized(_discoveredServers) {
+            val duplicateKey = _discoveredServers.entries
+                .firstOrNull {
+                    it.key != candidate.id &&
+                        it.value.ipAddress == candidate.ipAddress &&
+                        it.value.port == candidate.port
+                }?.key
+            if (duplicateKey != null) {
+                val existing = _discoveredServers.getValue(duplicateKey)
+                if (candidate.name.startsWith(GENERIC_SERVER_NAME_PREFIX) &&
+                    !existing.name.startsWith(GENERIC_SERVER_NAME_PREFIX)
+                ) {
+                    return
+                }
+                _discoveredServers.remove(duplicateKey)
+            }
+            _discoveredServers[candidate.id] = candidate
+        }
+    }
 
     var onEvent: ((NetworkEvent) -> Unit)? = null
 
@@ -109,8 +152,17 @@ class NetworkManager(
 
     // ——— ХОСТ: TCP-сервер + анонс в mDNS/Bonjour ———
 
-    fun startServer(port: Int = DEFAULT_PORT, serviceName: String) {
-        Log.d(TAG, "startServer(port=$port, name=$serviceName) вызван")
+    /**
+     * Пробует [CANDIDATE_PORTS] по порядку и занимает первый свободный — раньше порт
+     * был одним произвольным значением из поля настроек, и если он совпадал с портом,
+     * уже занятым в системе (например, сокет предыдущего запуска ещё не освободился),
+     * сервер просто не поднимался без вменяемого fallback'а. [onBound] вызывается на
+     * главном потоке с итоговым портом, как только сокет реально забинжен (до начала
+     * accept-цикла, который иначе выполняется в этой же корутине бесконечно), либо
+     * с null, если ни один из портов не освободился.
+     */
+    fun startServer(serviceName: String, onBound: (Int?) -> Unit = {}) {
+        Log.d(TAG, "startServer(name=$serviceName) вызван, кандидаты портов: $CANDIDATE_PORTS")
         scope.launch {
             try {
                 stopAll()
@@ -120,17 +172,36 @@ class NetworkManager(
                 val trimmedName = serviceName.trim().ifEmpty { "Host" }
                 hostNickname = trimmedName
 
-                val socket = withContext(Dispatchers.IO) { ServerSocket(port) }
-                serverSocket = socket
-                Log.d(TAG, "ServerSocket поднят на порту $port")
+                var socket: ServerSocket? = null
+                var boundPort: Int? = null
+                for (candidatePort in CANDIDATE_PORTS) {
+                    try {
+                        socket = withContext(Dispatchers.IO) { ServerSocket(candidatePort) }
+                        boundPort = candidatePort
+                        break
+                    } catch (e: IOException) {
+                        Log.d(TAG, "startServer: порт $candidatePort занят, пробую следующий")
+                    }
+                }
+                if (socket == null || boundPort == null) {
+                    Log.e(TAG, "startServer: не удалось занять ни один из портов $CANDIDATE_PORTS")
+                    status = ConnectionStatus.FAILED
+                    withContext(Dispatchers.Main) { onBound(null) }
+                    return@launch
+                }
 
-                withContext(Dispatchers.IO) { registerBonjourService(trimmedName, port) }
+                val boundSocket: ServerSocket = socket
+                serverSocket = boundSocket
+                Log.d(TAG, "ServerSocket поднят на порту $boundPort")
+                withContext(Dispatchers.Main) { onBound(boundPort) }
+
+                withContext(Dispatchers.IO) { registerBonjourService(trimmedName, boundPort) }
 
                 status = ConnectionStatus.CONNECTED
 
                 while (mode == NetworkMode.HOST && serverSocket != null) {
                     try {
-                        val clientConnection = withContext(Dispatchers.IO) { socket.accept() }
+                        val clientConnection = withContext(Dispatchers.IO) { boundSocket.accept() }
                         Log.d(TAG, "Принято TCP-подключение от ${clientConnection.inetAddress?.hostAddress}")
                         acceptNewPeer(clientConnection)
                     } catch (e: SocketException) {
@@ -205,7 +276,7 @@ class NetworkManager(
 
                     override fun serviceRemoved(event: ServiceEvent) {
                         Log.d(TAG, "serviceRemoved: name=${event.name}")
-                        _discoveredServers.remove(event.name)
+                        synchronized(_discoveredServers) { _discoveredServers.remove(event.name) }
                         onServersChanged?.invoke()
                     }
 
@@ -214,11 +285,13 @@ class NetworkManager(
                         val address = info.hostAddresses.firstOrNull()
                         Log.d(TAG, "serviceResolved: name=${event.name} address=$address port=${info.port}")
                         if (address == null) return
-                        _discoveredServers[event.name] = DiscoveredServer(
-                            id = event.name,
-                            name = event.name,
-                            ipAddress = address,
-                            port = info.port
+                        addOrUpdateDiscoveredServer(
+                            DiscoveredServer(
+                                id = event.name,
+                                name = event.name,
+                                ipAddress = address,
+                                port = info.port
+                            )
                         )
                         onServersChanged?.invoke()
                     }
@@ -248,7 +321,7 @@ class NetworkManager(
             }
         }
         serviceListener = null
-        _discoveredServers.clear()
+        synchronized(_discoveredServers) { _discoveredServers.clear() }
     }
 
     /**
@@ -294,14 +367,14 @@ class NetworkManager(
 
     /**
      * Дополняет mDNS-поиск прямым перебором адресов подсети /24 прямыми TCP-подключениями
-     * на игровой порт. mDNS не находит хосты в сетях, где multicast-трафик не доходит
-     * между устройствами — например, когда один из телефонов сам раздаёт Wi-Fi-хотспот:
-     * Android там нередко не пробрасывает multicast от AP-интерфейса к обычным приложениям.
-     * Прямой TCP-коннект на каждый адрес работает независимо от multicast, ценой нескольких
-     * секунд на полный перебор 254 адресов.
+     * на каждый из [CANDIDATE_PORTS]. mDNS не находит хосты в сетях, где multicast-трафик
+     * не доходит между устройствами — например, когда один из телефонов сам раздаёт
+     * Wi-Fi-хотспот: Android там нередко не пробрасывает multicast от AP-интерфейса к
+     * обычным приложениям. Прямой TCP-коннект на каждый адрес работает независимо от
+     * multicast, ценой нескольких секунд на полный перебор 254 адресов × 3 портов.
      */
-    fun startSubnetScan(port: Int = DEFAULT_PORT) {
-        Log.d(TAG, "startSubnetScan(port=$port) вызван")
+    fun startSubnetScan() {
+        Log.d(TAG, "startSubnetScan() вызван, порты: $CANDIDATE_PORTS")
         scope.launch {
             val localAddress = withContext(Dispatchers.IO) { findLocalIPv4Address() } ?: run {
                 Log.e(TAG, "startSubnetScan: не найден локальный IPv4-адрес — скан отменён")
@@ -309,34 +382,37 @@ class NetworkManager(
             }
             val localIp = localAddress.hostAddress ?: return@launch
             val prefix = localIp.substringBeforeLast(".")
-            Log.d(TAG, "startSubnetScan: сканирую $prefix.1-254 на порту $port")
+            Log.d(TAG, "startSubnetScan: сканирую $prefix.1-254 на портах $CANDIDATE_PORTS")
 
             withContext(Dispatchers.IO) {
                 val semaphore = Semaphore(32)
-                (1..254).map { host ->
-                    async {
-                        val candidateIp = "$prefix.$host"
-                        if (candidateIp == localIp) return@async
-                        semaphore.withPermit {
-                            try {
-                                Socket().use { socket ->
-                                    socket.connect(InetSocketAddress(candidateIp, port), 400)
-                                    Log.d(TAG, "startSubnetScan: найден открытый порт на $candidateIp:$port")
-                                    val id = "scan:$candidateIp:$port"
-                                    _discoveredServers[id] = DiscoveredServer(
-                                        id = id,
-                                        name = "Хост $candidateIp",
-                                        ipAddress = candidateIp,
-                                        port = port
-                                    )
-                                    withContext(Dispatchers.Main) { onServersChanged?.invoke() }
+                (1..254).flatMap { host -> CANDIDATE_PORTS.map { port -> host to port } }
+                    .map { (host, port) ->
+                        async {
+                            val candidateIp = "$prefix.$host"
+                            if (candidateIp == localIp) return@async
+                            semaphore.withPermit {
+                                try {
+                                    Socket().use { socket ->
+                                        socket.connect(InetSocketAddress(candidateIp, port), 400)
+                                        Log.d(TAG, "startSubnetScan: найден открытый порт на $candidateIp:$port")
+                                        val id = "scan:$candidateIp:$port"
+                                        addOrUpdateDiscoveredServer(
+                                            DiscoveredServer(
+                                                id = id,
+                                                name = "$GENERIC_SERVER_NAME_PREFIX$candidateIp",
+                                                ipAddress = candidateIp,
+                                                port = port
+                                            )
+                                        )
+                                        withContext(Dispatchers.Main) { onServersChanged?.invoke() }
+                                    }
+                                } catch (e: IOException) {
+                                    // Порт закрыт/недоступен — ожидаемый исход для большинства адресов подсети.
                                 }
-                            } catch (e: IOException) {
-                                // Порт закрыт/недоступен — ожидаемый исход для большинства адресов подсети.
                             }
                         }
-                    }
-                }.awaitAll()
+                    }.awaitAll()
             }
             Log.d(TAG, "startSubnetScan: завершён")
         }
@@ -373,7 +449,7 @@ class NetworkManager(
 
     // ——— Подключение к хосту напрямую по IP (адрес получен из mDNS-резолва) ———
 
-    fun connectToServer(ip: String, port: Int = DEFAULT_PORT) {
+    fun connectToServer(ip: String, port: Int = CANDIDATE_PORTS.first()) {
         Log.d(TAG, "connectToServer(ip=$ip, port=$port) вызван")
         scope.launch {
             try {
@@ -411,12 +487,13 @@ class NetworkManager(
                                 it.outputStream?.flush()
                             }
                         } else {
-                            peers.forEach { (_, peer) ->
+                            Log.d(TAG, "send: рассылка kind=${message.kind} peers=${peers.size}")
+                            peers.forEach { (id, peer) ->
                                 try {
                                     peer.outputStream?.write(data)
                                     peer.outputStream?.flush()
                                 } catch (e: Exception) {
-                                    // Peer might be disconnected
+                                    Log.d(TAG, "send: не удалось доставить kind=${message.kind} peer=$id: ${e.message}")
                                 }
                             }
                         }
@@ -428,6 +505,7 @@ class NetworkManager(
                     else -> {}
                 }
             } catch (e: Exception) {
+                Log.d(TAG, "send: исключение при отправке kind=${message.kind}: ${e.message}")
                 status = ConnectionStatus.FAILED
             }
         }

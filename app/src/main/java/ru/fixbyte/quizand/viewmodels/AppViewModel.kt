@@ -31,8 +31,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val _hostNickname = MutableStateFlow("Ведущий")
     val hostNickname: StateFlow<String> = _hostNickname
 
-    private val _hostPortText = MutableStateFlow(NetworkManager.DEFAULT_PORT.toString())
-    val hostPortText: StateFlow<String> = _hostPortText
+    /** Порт, на котором реально поднялся сервер (один из NetworkManager.CANDIDATE_PORTS) —
+     *  заполняется после успешного startServer(), а не выбирается пользователем. */
+    private val _hostBoundPort = MutableStateFlow<Int?>(null)
+    val hostBoundPort: StateFlow<Int?> = _hostBoundPort
 
     // Player Settings
     private val _playerNickname = MutableStateFlow("")
@@ -138,15 +140,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun startHosting() {
-        val port = _hostPortText.value.toIntOrNull() ?: 5000
-        if (port <= 0) {
-            _connectionHint.value = "Неверный порт"
-            return
+        network.startServer(_hostNickname.value) { boundPort ->
+            if (boundPort != null) {
+                _hostBoundPort.value = boundPort
+                _connectionHint.value = "Сервер \"${_hostNickname.value}\" запущен на порту $boundPort"
+            } else {
+                _hostBoundPort.value = null
+                _connectionHint.value = "Не удалось запустить сервер — все порты заняты"
+            }
         }
-
         viewModelScope.launch {
-            network.startServer(port, _hostNickname.value)
-            _connectionHint.value = "Сервер \"${_hostNickname.value}\" запущен на порту $port"
             _hostLocalIp.value = network.getLocalIPv4Address()
         }
     }
@@ -161,10 +164,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun startGameAsHost() {
         if (_players.value.isEmpty()) {
+            Log.d(TAG, "startGameAsHost: отменено, _players.value пуст в момент тапа")
             _connectionHint.value = "Нужен хотя бы 1 подключенный игрок"
             return
         }
 
+        Log.d(TAG, "startGameAsHost: отправка gameStarted, игроков=${_players.value.size}")
         _phase.value = AppPhase.HOST_CONTROL
         // С этого момента новые подключения отклоняются — нельзя зайти посреди игры.
         network.gameInProgress = true
@@ -176,6 +181,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 senderNickname = _hostNickname.value
             )
             network.send(msg)
+            Log.d(TAG, "startGameAsHost: gameStarted отправлен network.send()")
         }
     }
 
@@ -334,9 +340,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
         val parts = trimmed.split(":")
         val ip = parts[0].trim()
-        val port = parts.getOrNull(1)?.trim()?.toIntOrNull() ?: 5000
+        val port = parts.getOrNull(1)?.trim()?.toIntOrNull() ?: NetworkManager.CANDIDATE_PORTS.first()
         if (ip.isEmpty()) {
-            _connectionHint.value = "Неверный формат. Пример: 192.168.1.5:5000"
+            _connectionHint.value = "Неверный формат. Пример: 192.168.1.5:5001"
             return
         }
 
@@ -384,10 +390,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun onHostNicknameChanged(value: String) {
         _hostNickname.value = value
-    }
-
-    fun onHostPortTextChanged(value: String) {
-        _hostPortText.value = value
     }
 
     fun onPlayerNicknameChanged(value: String) {
