@@ -22,7 +22,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val _phase = MutableStateFlow(AppPhase.SPLASH)
     val phase: StateFlow<AppPhase> = _phase
 
-    private val _selectedRole = MutableStateFlow<UserRole?>(null)
+    // internal: unit-тесты выставляют роль напрямую, минуя chooseRole() — тот заодно
+    // запускает реальный сетевой поиск (JmDNS + скан подсети), чего в тесте не нужно.
+    internal val _selectedRole = MutableStateFlow<UserRole?>(null)
     val selectedRole: StateFlow<UserRole?> = _selectedRole
 
     /** Собственный IP-адрес хоста в текущей Wi-Fi-сети — показывается игрокам
@@ -89,7 +91,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             prefs.edit().putString(KEY_PLAYER_ID, newID).apply()
         }
     }
-    private val network = NetworkManager(getApplication(), viewModelScope)
+    // internal (не private): unit-тесты в src/test симулируют входящие сетевые события,
+    // вызывая network.onEvent?.invoke(...) напрямую, не поднимая реальные сокеты.
+    internal val network = NetworkManager(getApplication(), viewModelScope)
     private var attemptedPlayerIDsInRound = mutableSetOf<String>()
 
     init {

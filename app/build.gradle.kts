@@ -50,6 +50,15 @@ android {
         compose = true
         resValues = true
     }
+
+    testOptions {
+        unitTests {
+            // Код вьюмодели проходит через android.util.Log и другие SDK-заглушки —
+            // без этого флага такие вызовы бросают исключение в чистом JVM-тесте
+            // вместо того, чтобы быть тихо проигнорированными, как на реальном устройстве.
+            isReturnDefaultValues = true
+        }
+    }
 }
 
 dependencies {
@@ -80,6 +89,8 @@ dependencies {
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
 
     testImplementation(libs.junit)
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
+    testImplementation("io.mockk:mockk:1.13.13")
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.espresso.core)
